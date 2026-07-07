@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kaimaku</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8E%AD%3C/text%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div class="brand">
+          <span class="brandMark" aria-hidden="true">開幕</span>
+          <div>
+            <h1>Kaimaku</h1>
+            <p>Openings y backdrops para tu Jellyfin/Emby</p>
+          </div>
+        </div>
+        <button id="refreshItems" class="iconButton" title="Actualizar destinos" aria-label="Actualizar destinos">↻</button>
+      </header>
+
+      <section class="grid">
+        <section class="panel compose">
+          <ol class="steps">
+            <li class="stepItem" data-step="1">
+              <span class="stepLabel">Destino <span id="itemCount" class="stepCount"></span></span>
+
+              <div id="libraryTabs" class="libraryTabs"></div>
+              <input id="destinationFilter" class="destFilter" type="search" placeholder="Buscar serie o película..." />
+              <div id="destinations" class="destinations"></div>
+            </li>
+
+            <li class="stepItem" data-step="2">
+              <span class="stepLabel">Opening</span>
+
+              <button id="autoSearchBtn" type="button" class="primary autoSearch" disabled>
+                Buscar automáticamente
+              </button>
+              <p class="hint">Prioriza openings oficiales en español/castellano.</p>
+
+              <div id="searchResults" class="searchResults"></div>
+
+              <div id="preview" class="preview empty">
+                <div class="emptyState">Elige un destino y pulsa "Buscar automáticamente" para ver el opening propuesto aquí.</div>
+              </div>
+
+              <details class="advanced">
+                <summary>Buscar manualmente / pegar un enlace</summary>
+                <label class="field">
+                  <span>Buscar en YouTube</span>
+                  <div class="inline">
+                    <input id="searchQuery" type="text" placeholder="Ej: Dragon Ball Z opening 1" />
+                    <button id="searchBtn" type="button">Buscar</button>
+                  </div>
+                </label>
+                <label class="field">
+                  <span>...o pega un enlace directo</span>
+                  <div class="inline">
+                    <input id="youtubeUrl" type="url" placeholder="https://www.youtube.com/watch?v=..." />
+                    <button id="previewBtn" type="button">Previsualizar</button>
+                  </div>
+                </label>
+              </details>
+            </li>
+
+            <li class="stepItem" data-step="3">
+              <span class="stepLabel">Instalar</span>
+
+              <div class="chips">
+                <label class="chip"><input id="assetAudio" type="checkbox" checked /> Audio</label>
+                <label class="chip"><input id="assetVideo" type="checkbox" checked /> Video</label>
+                <label class="chip"><input id="refreshLibs" type="checkbox" checked /> Refrescar bibliotecas</label>
+              </div>
+
+              <button id="enqueueBtn" class="primary">Añadir a cola</button>
+              <p id="formMsg" class="message"></p>
+            </li>
+          </ol>
+        </section>
+
+        <section class="panel queuePanel">
+          <div class="panelHeader">
+            <h2>Cola</h2>
+            <span id="queueCount" class="pill">0 jobs</span>
+          </div>
+          <div id="jobs" class="jobs"></div>
+        </section>
+      </section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

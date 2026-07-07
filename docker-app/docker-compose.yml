@@ -1,0 +1,19 @@
+services:
+  anime-theme-sync:
+    build: .
+    container_name: anime-theme-sync
+    ports:
+      - "8098:8098"
+    environment:
+      MEDIA_ROOTS: "${MEDIA_ROOTS:-/media/anime}"
+      DATA_DIR: "/data"
+      JELLYFIN_URL: "${JELLYFIN_URL:-http://host.docker.internal:8096}"
+      JELLYFIN_API_KEY: "${JELLYFIN_API_KEY:-}"
+      EMBY_URL: "${EMBY_URL:-http://host.docker.internal:8097}"
+      EMBY_API_KEY: "${EMBY_API_KEY:-}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - /mnt/user/datos/media:/media
+      - /mnt/user/datos/media/_theme_tools/anime-theme-sync-ui:/data
+    restart: unless-stopped

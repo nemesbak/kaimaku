@@ -1,0 +1,51 @@
+{
+  "jellyfin": {
+    "enabled": true,
+    "url": "http://YOUR-SERVER-IP:8096",
+    "api_key": "REPLACE_WITH_JELLYFIN_API_KEY"
+  },
+  "emby": {
+    "enabled": true,
+    "url": "http://YOUR-SERVER-IP:8097",
+    "api_key": "REPLACE_WITH_EMBY_API_KEY"
+  },
+  "scan": {
+    "library_names": ["Anime"],
+    "include_item_types": ["Series"],
+    "filesystem_roots": []
+  },
+  "search": {
+    "results_per_query": 5,
+    "keep_candidates": 5,
+    "min_score": 0.55,
+    "max_candidate_seconds": 360,
+    "delay_seconds": 0.5,
+    "query_templates": [
+      "{title} opening español castellano",
+      "{title} opening castellano",
+      "{title} anime opening español",
+      "{title} anime op español castellano",
+      "{title} anime opening creditless",
+      "{title} anime opening official",
+      "{title} opening official",
+      "{title} main theme anime"
+    ],
+    "official_channel_terms": [
+      "crunchyroll",
+      "aniplex",
+      "toho animation",
+      "kadokawa",
+      "netflix anime",
+      "vizmedia",
+      "bandai namco"
+    ]
+  },
+  "download": {
+    "overwrite_existing": false,
+    "convert_with_ffmpeg": true,
+    "target_names": {
+      "audio": "theme-music/song1.mp3",
+      "video": "backdrops/intro.mp4"
+    }
+  }
+}

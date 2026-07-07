@@ -1,0 +1,47 @@
+# runtime artifacts / generated output
+state/
+staged*/
+*.tar.gz
+anime_candidates*.md
+
+# real config (ship config.example.json instead)
+config.json
+config.anime-server.json
+
+# docker-app runtime env / data
+docker-app/.env
+docker-app/app/__pycache__/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+
+# one-off / server-specific maintenance scripts (not part of the tool)
+filter_candidates.py
+refresh_media_libraries.py
+find_emby_auth_tables.py
+find_media_api_keys.py
+find_remote_ffmpeg.sh
+inspect_dragon_ball_pattern.py
+inspect_dragonball_pattern_samples.py
+inspect_media_servers.py
+install_persistent_remote_tools.sh
+install_remote_tools.sh
+list_candidate_buckets.py
+mirror_dragonball_theme_names.py
+normalize_jellyfin_theme_names.py
+prune_remaining_theme_extras.py
+prune_theme_duplicates.py
+rename_backdrops_to_intro.py
+run_auto_openings_remote.sh
+summarize_opening_candidates.py
+summarize_stage_manifest.py
+verify_anime_theme_install.py
+verify_dragonball_theme_names.py
+verify_jellyfin_theme_names.py
+verify_jellyfin_theme_structure.py
+verify_single_theme_files.py
+ffmpeg-wrapper
+ffprobe-wrapper
+tools/
