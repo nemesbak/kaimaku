@@ -508,6 +508,9 @@ def worker_loop() -> None:
 
             installed: list[dict[str, Any]] = []
             backups: list[str] = []
+            job.result["installed"] = installed
+            job.result["backups"] = backups
+
             if "audio" in job.assets:
                 staged_audio = work / "song1.mp3"
                 download_audio(job, job.url, staged_audio)
@@ -533,13 +536,8 @@ def worker_loop() -> None:
                 job_log(job, f"Video instalado: {THEME_VIDEO}")
 
             library_name = media_root_name(destination)
-            refresh = (
-                refresh_servers(library_name)
-                if library_name and job.result is not None and job.result.get("refresh", True)
-                else []
-            )
-            if job.result is not None:
-                job.result.update({"installed": installed, "backups": backups, "refresh": refresh})
+            refresh = refresh_servers(library_name) if library_name and job.result.get("refresh", True) else []
+            job.result["refresh"] = refresh
             if job.assets and refresh:
                 job_log(job, "Bibliotecas refrescadas")
             job.status = "done"
@@ -550,6 +548,16 @@ def worker_loop() -> None:
         except Exception as exc:
             job.status = "failed"
             job_log(job, f"ERROR: {exc}")
+            # Best-effort: if part of the job (e.g. audio) already made it to disk before
+            # the failure, still refresh the library so that partial install shows up.
+            if job.result.get("installed"):
+                try:
+                    library_name = media_root_name(ensure_inside_roots(Path(job.destination)))
+                    if library_name and job.result.get("refresh", True):
+                        job.result["refresh"] = refresh_servers(library_name)
+                        job_log(job, "Bibliotecas refrescadas (instalación parcial)")
+                except Exception:
+                    pass
         finally:
             cancelled_jobs.discard(job.id)
             running_processes.pop(job.id, None)
