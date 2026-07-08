@@ -6,7 +6,7 @@ Instala automáticamente los openings/temas (`theme-music/song1.mp3` y `backdrop
 
 ## Instalar
 
-Requisito único: Docker + Docker Compose v2 (`docker compose`, no `docker-compose`).
+Requisito único: Docker + Docker Compose v2 (`docker compose`, no `docker-compose`). La imagen ya está publicada en [Docker Hub](https://hub.docker.com/r/nemesbak/kaimaku) — no hace falta compilar nada.
 
 **1. Clona el repositorio**
 
@@ -22,7 +22,7 @@ Este es el archivo completo, tal cual viene en el repo — no hay ningún `.env`
 ```yaml
 services:
   kaimaku:
-    build: .
+    image: nemesbak/kaimaku:latest
     container_name: kaimaku
     ports:
       - "8098:8098"   # <-- puerto donde abrirás Kaimaku: http://IP-DEL-SERVIDOR:8098
@@ -60,7 +60,7 @@ Lo único que **tienes** que cambiar es la línea marcada `<-- CAMBIA ESTA`, por
 **3. Levanta el contenedor**
 
 ```bash
-docker compose up -d --build
+docker compose up -d
 ```
 
 **4. Abre la app**
@@ -72,8 +72,8 @@ http://IP-DEL-SERVIDOR:8098
 ## Actualizar
 
 ```bash
-git pull
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
 ## Desinstalar
@@ -87,7 +87,7 @@ Tu biblioteca de medios no se toca; solo se borra el contenedor.
 ## Solución de problemas
 
 **Las descargas fallan con `HTTP Error 403: Forbidden` o mencionan "JavaScript runtime"/"EJS"**
-YouTube exige ejecutar JavaScript para resolver el cifrado de sus URLs de vídeo. La imagen ya trae lo necesario para esto — comprueba que estás en la última versión (`git pull && docker compose up -d --build`).
+YouTube exige ejecutar JavaScript para resolver el cifrado de sus URLs de vídeo. La imagen ya trae lo necesario para esto — comprueba que estás en la última versión (`docker compose pull && docker compose up -d`).
 
 **No refresca Jellyfin/Emby tras instalar**
 Comprueba que `JELLYFIN_API_KEY`/`EMBY_API_KEY` están rellenas en `docker-compose.yml` y que `JELLYFIN_URL`/`EMBY_URL` son alcanzables desde el contenedor, no solo desde tu navegador.

@@ -1,6 +1,6 @@
 services:
   kaimaku:
-    build: .
+    image: nemesbak/kaimaku:latest
     container_name: kaimaku
     ports:
       - "8098:8098"   # <-- puerto donde abrirás Kaimaku: http://IP-DEL-SERVIDOR:8098
