@@ -561,6 +561,7 @@ def worker_loop() -> None:
         finally:
             cancelled_jobs.discard(job.id)
             running_processes.pop(job.id, None)
+            shutil.rmtree(WORK_DIR / job.id, ignore_errors=True)
             job.updated_at = time.time()
             emit_event({"type": "job", "job": asdict(job)})
             job_queue.task_done()
@@ -573,6 +574,10 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 @app.on_event("startup")
 def startup() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    # work/ only ever holds scratch files for jobs tracked in the (in-memory) `jobs`
+    # dict, which starts empty on every boot — anything left over here belongs to a
+    # previous process life (crash, restart mid-download) and is safe to discard.
+    shutil.rmtree(WORK_DIR, ignore_errors=True)
     WORK_DIR.mkdir(parents=True, exist_ok=True)
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     thread = threading.Thread(target=worker_loop, daemon=True)
