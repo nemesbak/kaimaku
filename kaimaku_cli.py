@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Anime Theme Sync
+Kaimaku CLI
 
-Prototype CLI to find theme/trailer candidates for anime libraries shared by
+Batch tool to find theme/trailer candidates for media libraries shared by
 Jellyfin and Emby. The default flow is intentionally cautious:
 
-  1. scan     -> collect anime series/items
+  1. scan     -> collect series/items
   2. search   -> create candidate report using yt-dlp search
   3. download -> explicitly download selected candidates
   4. refresh  -> ask Jellyfin/Emby to rescan changed items
@@ -30,8 +30,8 @@ from urllib.error import HTTPError, URLError
 
 APP_DIR = Path(__file__).resolve().parent
 STATE_DIR = APP_DIR / "state"
-DEFAULT_SCAN = STATE_DIR / "anime_items.json"
-DEFAULT_CANDIDATES = STATE_DIR / "anime_candidates.json"
+DEFAULT_SCAN = STATE_DIR / "items.json"
+DEFAULT_CANDIDATES = STATE_DIR / "candidates.json"
 DEFAULT_CHANGED = STATE_DIR / "changed_items.json"
 DEFAULT_STAGE = APP_DIR / "staged"
 
@@ -245,7 +245,7 @@ def scan(args: argparse.Namespace) -> None:
     if not items:
         items = scan_from_paths(config)
     save_json(Path(args.output), items)
-    print(f"scan: wrote {len(items)} anime items to {args.output}")
+    print(f"scan: wrote {len(items)} items to {args.output}")
 
 
 def yt_search(query: str, limit: int) -> list[dict[str, Any]]:
@@ -508,7 +508,7 @@ def stage(args: argparse.Namespace) -> None:
         if args.limit and selected > args.limit:
             break
 
-        item_slug = f"{selected:03d}_{slugify(item.get('name') or 'anime')}"
+        item_slug = f"{selected:03d}_{slugify(item.get('name') or 'item')}"
         item_dir = stage_root / item_slug
         item_dir.mkdir(parents=True, exist_ok=True)
         record = {
@@ -653,11 +653,11 @@ def refresh(args: argparse.Namespace) -> None:
 def report(args: argparse.Namespace) -> None:
     data = load_json(Path(args.input))
     lines = [
-        "# Anime Theme Candidates",
+        "# Theme Candidates",
         "",
         f"Items: {len(data)}",
         "",
-        "| Anime | Audio pick | Video pick | Candidates |",
+        "| Title | Audio pick | Video pick | Candidates |",
         "| --- | --- | --- | --- |",
     ]
     weak: list[str] = []
@@ -692,7 +692,7 @@ def report(args: argparse.Namespace) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Find and install anime theme media for Jellyfin/Emby.")
+    parser = argparse.ArgumentParser(description="Find and install theme media for Jellyfin/Emby.")
     parser.add_argument("--config", default=str(APP_DIR / "config.json"))
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -700,7 +700,7 @@ def main() -> int:
     p.add_argument("--force", action="store_true")
     p.set_defaults(func=init_config)
 
-    p = sub.add_parser("scan", help="Scan anime items from Jellyfin/Emby or filesystem roots.")
+    p = sub.add_parser("scan", help="Scan library items from Jellyfin/Emby or filesystem roots.")
     p.add_argument("--output", default=str(DEFAULT_SCAN))
     p.set_defaults(func=scan)
 
@@ -732,7 +732,7 @@ def main() -> int:
 
     p = sub.add_parser("report", help="Create a Markdown report from candidate JSON.")
     p.add_argument("--input", default=str(DEFAULT_CANDIDATES))
-    p.add_argument("--output", default=str(APP_DIR / "anime_candidates_report.md"))
+    p.add_argument("--output", default=str(APP_DIR / "candidates_report.md"))
     p.add_argument("--weak-score", type=float, default=0.75)
     p.set_defaults(func=report)
 

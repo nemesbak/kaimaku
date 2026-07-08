@@ -21,6 +21,23 @@
 
 No hace falta Python, `yt-dlp` ni `ffmpeg` en el host — todo vive dentro de la imagen.
 
+### Instalar Docker (si no lo tienes ya)
+
+- **Unraid / Synology / TrueNAS**: Docker ya viene incluido, no necesitas instalar nada.
+- **Windows / macOS**: instala [Docker Desktop](https://www.docker.com/products/docker-desktop/) — trae Docker y Compose juntos.
+- **Ubuntu / Debian**:
+
+  ```bash
+  curl -fsSL https://get.docker.com | sh
+  sudo usermod -aG docker $USER   # para no tener que usar sudo cada vez; cierra sesión y vuelve a entrar
+  ```
+
+  Este script instala Docker Engine y el plugin de Compose (`docker compose`) juntos. Verifica con:
+
+  ```bash
+  docker compose version
+  ```
+
 ## Instalación paso a paso
 
 ```bash
@@ -29,12 +46,33 @@ cd kaimaku/docker-app
 cp .env.example .env
 ```
 
-Edita `.env`:
+Abre `.env` y cambia **al menos** `MEDIA_HOST_PATH` (y `DATA_HOST_PATH` si quieres separarlo) por tus rutas reales. Con solo eso ya puedes arrancar — el resto de valores por defecto funcionan tal cual. Ejemplo relleno para copiar y adaptar:
 
-1. `MEDIA_HOST_PATH` → la carpeta real de tu biblioteca en el host (ej. `/mnt/user/datos/media` en Unraid, o `/srv/media` en un servidor genérico).
-2. `DATA_HOST_PATH` → una carpeta pequeña y persistente para el estado de Kaimaku (backups). Puede vivir dentro o fuera de `MEDIA_HOST_PATH`, no importa.
-3. `MEDIA_ROOTS` → qué subcarpetas de esa biblioteca quieres que aparezcan como "bibliotecas" en la interfaz, **tal como se llaman dentro del contenedor** (`/media/<nombre>`, no la ruta del host). Puedes poner tantas como quieras separadas por comas.
-4. `JELLYFIN_URL` / `JELLYFIN_API_KEY` y `EMBY_URL` / `EMBY_API_KEY` → opcional. Sin API key la instalación funciona igual, solo se omite el refresco automático de biblioteca.
+```bash
+# --- host paths: CAMBIA ESTAS DOS ---
+MEDIA_HOST_PATH=/mnt/user/datos/media
+DATA_HOST_PATH=/mnt/user/datos/media/_theme_tools/kaimaku-data
+
+# --- container / port: normalmente no hace falta tocar ---
+CONTAINER_NAME=kaimaku
+PORT=8098
+
+# --- bibliotecas a mostrar (nombres de carpeta dentro de MEDIA_HOST_PATH) ---
+MEDIA_ROOTS=/media/anime,/media/series,/media/peliculas
+
+# --- Jellyfin/Emby: opcional, déjalo en blanco si no quieres refresco automático ---
+JELLYFIN_URL=http://192.168.1.10:8096
+JELLYFIN_API_KEY=
+
+EMBY_URL=http://192.168.1.10:8097
+EMBY_API_KEY=
+```
+
+Notas sobre estos valores:
+
+- `MEDIA_HOST_PATH` es la carpeta que **ya tienes** con tu biblioteca (donde están tus carpetas `anime/`, `series/`, `peliculas/`...). Se monta dentro del contenedor como `/media`.
+- `MEDIA_ROOTS` usa esa ruta **de dentro del contenedor** (`/media/...`), no la del host — por eso siempre empieza por `/media/`, sea cual sea tu `MEDIA_HOST_PATH` real.
+- `JELLYFIN_URL`/`EMBY_URL`: la IP de tu servidor (la misma donde vas a correr Kaimaku, normalmente) y el puerto de cada uno. Cómo conseguir la API key: en Jellyfin/Emby → Panel de control → API Keys (o "Claves API") → Nueva clave.
 
 ```bash
 docker compose up -d --build
