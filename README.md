@@ -4,7 +4,7 @@
 
 Incluye dos formas de usarlo:
 
-- **[`docker-app/`](docker-app)** — interfaz web (recomendada). Búsqueda automática por serie, cola en tiempo real, cancelar/reintentar, todas tus bibliotecas (no solo anime).
+- **[`docker-app/`](docker-app)** — interfaz web (recomendada). Modo manual (revisas cada candidato) o autopiloto (biblioteca entera sin más clics, con umbral de confianza), cola en tiempo real, cancelar/reintentar, todas tus bibliotecas (no solo anime).
 - **`anime_theme_sync.py`** — CLI por lotes para procesar una biblioteca entera de una vez (scan → search → stage → install → refresh), pensada para automatizar vía cron/user scripts.
 
 Ambos comparten la misma lógica de puntuación: penaliza covers/AMV/reactions/reviews y prioriza openings oficiales en español/castellano.
@@ -12,12 +12,13 @@ Ambos comparten la misma lógica de puntuación: penaliza covers/AMV/reactions/r
 ## Interfaz web (Kaimaku)
 
 ```bash
-cd docker-app
-cp .env.example .env   # rellena MEDIA_ROOTS y, opcionalmente, las API keys
+git clone https://github.com/nemesbak/kaimaku.git
+cd kaimaku/docker-app
+cp .env.example .env   # rellena MEDIA_HOST_PATH, MEDIA_ROOTS y, opcionalmente, las API keys
 docker compose up -d --build
 ```
 
-Abre `http://SERVER-IP:8098`. Detalles de configuración en [`docker-app/README.md`](docker-app/README.md).
+Abre `http://SERVER-IP:8098`. Guía completa (variables, arquitectura, solución de problemas) en [`docker-app/README.md`](docker-app/README.md).
 
 ## CLI por lotes
 
