@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+import unicodedata
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
@@ -98,6 +99,7 @@ def media_items() -> list[dict[str, Any]]:
 
 
 def normalize(value: str) -> str:
+    value = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
     return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
 
 
@@ -108,7 +110,7 @@ def parse_folder_name(folder_name: str) -> tuple[str, int | None]:
     return clean_name(name), int(year_match.group(1)) if year_match else None
 
 
-AUTO_SEARCH_QUERY_TEMPLATES = [
+ANIME_QUERY_TEMPLATES = [
     "{title} opening español castellano",
     "{title} opening castellano",
     "{title} anime opening español",
@@ -117,11 +119,30 @@ AUTO_SEARCH_QUERY_TEMPLATES = [
     "{title} anime opening official",
 ]
 
+GENERIC_QUERY_TEMPLATES = [
+    "{title} tema principal español",
+    "{title} banda sonora tema oficial",
+    "{title} soundtrack theme song",
+    "{title} tema de entrada español",
+    "{title} intro tema musical",
+    "{title} trailer oficial español",
+]
+
+ANIME_LIBRARY_HINTS = ("anime", "animacion")
+
 OFFICIAL_CHANNEL_TERMS = ("crunchyroll", "vizmedia", "aniplex", "toho", "netflix anime", "muse asia", "funimation")
 
 
-def build_auto_queries(name: str) -> list[str]:
-    return [t.format(title=name) for t in AUTO_SEARCH_QUERY_TEMPLATES]
+def is_anime_library(library_name: str | None) -> bool:
+    if not library_name:
+        return True
+    name = library_name.lower()
+    return any(hint in name for hint in ANIME_LIBRARY_HINTS)
+
+
+def build_auto_queries(name: str, anime: bool = True) -> list[str]:
+    templates = ANIME_QUERY_TEMPLATES if anime else GENERIC_QUERY_TEMPLATES
+    return [t.format(title=name) for t in templates]
 
 
 def score_auto_candidate(name: str, year: int | None, video: dict[str, Any]) -> float:
@@ -131,11 +152,13 @@ def score_auto_candidate(name: str, year: int | None, video: dict[str, Any]) -> 
     score = 0.0
     if item_name and item_name in title:
         score += 0.35
-    if any(term in title for term in ("opening", "op ", "theme", "pv")):
+    if any(term in title for term in ("opening", "op ", "theme", "pv", "tema", "intro", "soundtrack", "banda sonora")):
         score += 0.25
+    elif "trailer" in title:
+        score += 0.12
     if any(term in title for term in ("español", "espanol", "castellano", "spanish", "latino")):
         score += 0.18
-    if any(term in title for term in ("official", "crunchyroll", "aniplex", "toho", "netflix")):
+    if any(term in title for term in ("official", "crunchyroll", "aniplex", "toho", "netflix", "oficial")):
         score += 0.15
     if any(term in channel for term in OFFICIAL_CHANNEL_TERMS):
         score += 0.20
@@ -417,6 +440,12 @@ def autopilot_log(run: AutopilotRun, message: str) -> None:
     emit_event({"type": "autopilot", "run": asdict(run)})
 
 
+def needed_assets(item: dict[str, Any], assets: list[str], overwrite: bool) -> list[str]:
+    if overwrite:
+        return list(assets)
+    return [a for a in assets if not (a == "audio" and item["has_audio"]) and not (a == "video" and item["has_video"])]
+
+
 def autopilot_worker(run_id: str, items: list[dict[str, Any]], req: AutopilotRequest) -> None:
     run = autopilot_runs[run_id]
     for item in items:
@@ -426,9 +455,7 @@ def autopilot_worker(run_id: str, items: list[dict[str, Any]], req: AutopilotReq
             break
 
         run.processed += 1
-        needed = list(req.assets)
-        if not req.overwrite:
-            needed = [a for a in needed if not (a == "audio" and item["has_audio"]) and not (a == "video" and item["has_video"])]
+        needed = needed_assets(item, req.assets, req.overwrite)
         if not needed:
             run.skipped.append({"name": item["name"], "reason": "ya instalado"})
             autopilot_log(run, f"Omitido (ya instalado): {item['name']}")
@@ -634,7 +661,8 @@ def _auto_search_one_query(query: str) -> list[dict[str, Any]]:
 
 def auto_search_candidates(destination: Path, limit: int = 8) -> tuple[str, int | None, list[dict[str, Any]]]:
     name, year = parse_folder_name(destination.name)
-    queries = build_auto_queries(name)
+    anime = is_anime_library(media_root_name(destination))
+    queries = build_auto_queries(name, anime)
 
     seen: set[str] = set()
     candidates: list[dict[str, Any]] = []
@@ -711,12 +739,27 @@ def start_autopilot(req: AutopilotRequest) -> dict[str, Any]:
     if not items:
         raise HTTPException(status_code=404, detail="no se encontraron destinos para ese ámbito")
 
-    run = AutopilotRun(id=uuid.uuid4().hex[:12], scope=scope, total=len(items))
+    pending = [i for i in items if needed_assets(i, req.assets, req.overwrite)]
+    already_done = len(items) - len(pending)
+    if not pending:
+        raise HTTPException(
+            status_code=400,
+            detail=f"los {len(items)} destinos de este ámbito ya tienen instalado lo seleccionado",
+        )
+
+    run = AutopilotRun(id=uuid.uuid4().hex[:12], scope=scope, total=len(pending))
     autopilot_runs[run.id] = run
+    if already_done:
+        autopilot_log(run, f"{already_done} de {len(items)} ya tenían audio/video instalado — excluidos del recuento")
     emit_event({"type": "autopilot", "run": asdict(run)})
-    thread = threading.Thread(target=autopilot_worker, args=(run.id, items, req), daemon=True)
+    thread = threading.Thread(target=autopilot_worker, args=(run.id, pending, req), daemon=True)
     thread.start()
     return {"run": asdict(run)}
+
+
+@app.get("/api/autopilot")
+def list_autopilot() -> dict[str, Any]:
+    return {"runs": [asdict(run) for run in sorted(autopilot_runs.values(), key=lambda r: r.created_at, reverse=True)]}
 
 
 @app.get("/api/autopilot/{run_id}")

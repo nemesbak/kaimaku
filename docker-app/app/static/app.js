@@ -10,6 +10,7 @@ const state = {
   selectedResultId: "",
   expandedJobs: new Set(),
   autopilotRun: null,
+  autopilotExpanded: false,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -339,6 +340,14 @@ function renderAutopilotStatus() {
   const lastLog = (run.logs || [])[run.logs.length - 1] || "";
   const isRunning = run.status === "running";
   const pct = run.total ? Math.round((run.processed / run.total) * 100) : 0;
+  const expanded = state.autopilotExpanded;
+  const skipReasons = {};
+  for (const s of run.skipped || []) {
+    skipReasons[s.reason] = (skipReasons[s.reason] || 0) + 1;
+  }
+  const reasonSummary = Object.entries(skipReasons)
+    .map(([reason, count]) => `${count} ${reason}`)
+    .join(", ");
   box.innerHTML = `
     <div class="jobHead">
       <div class="jobTitle">
@@ -350,11 +359,26 @@ function renderAutopilotStatus() {
     <div class="autopilotBar"><div class="autopilotBarFill" style="width:${pct}%"></div></div>
     <div class="jobMeta">
       <span class="lastLog">${lastLog}</span>
-      ${isRunning ? `<button type="button" class="ghost small" id="autopilotCancelBtn">Detener</button>` : ""}
+      <div class="jobActions">
+        ${run.skipped.length ? `<button type="button" class="linkBtn" id="autopilotToggleBtn">${expanded ? "Ocultar detalle" : "Ver detalle"}</button>` : ""}
+        ${isRunning ? `<button type="button" class="ghost small" id="autopilotCancelBtn">Detener</button>` : ""}
+      </div>
     </div>
+    ${expanded && reasonSummary ? `<p class="hint autopilotReasons">Omitidos por: ${reasonSummary}</p>` : ""}
+    ${
+      expanded
+        ? `<pre class="logs">${(run.skipped || []).map((s) => `omitido — ${s.name}: ${s.reason}`).concat(run.logs || []).join("\n")}</pre>`
+        : ""
+    }
   `;
   if (isRunning) {
     $("autopilotCancelBtn").addEventListener("click", cancelAutopilot);
+  }
+  if (run.skipped.length) {
+    $("autopilotToggleBtn").addEventListener("click", () => {
+      state.autopilotExpanded = !state.autopilotExpanded;
+      renderAutopilotStatus();
+    });
   }
 }
 
