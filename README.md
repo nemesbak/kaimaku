@@ -73,6 +73,15 @@ docker compose up -d
 http://IP-DEL-SERVIDOR:8098
 ```
 
+## Cómo funciona
+
+Verás tus bibliotecas (las que pusiste en `MEDIA_ROOTS`) con un filtro rápido "sin tema / con tema". Para cada serie o película tienes dos formas de instalar su opening/tema:
+
+- **Manual**: eliges el destino, Kaimaku busca en YouTube y te preselecciona el mejor candidato (priorizando fuentes oficiales en español) para que lo revises y confirmes antes de instalar. También puedes buscar a mano o pegar un enlace directo.
+- **Autopiloto**: eliges una biblioteca entera (o un destino) y un umbral mínimo de confianza. Kaimaku busca, puntúa e instala cada ítem solo si supera ese umbral — si no, lo omite en vez de instalar algo dudoso.
+
+Ambos modos comparten una cola de instalación en tiempo real (puedes cancelar o reintentar cualquier trabajo), hacen backup del archivo anterior antes de sobrescribirlo, y refrescan solo la biblioteca de Jellyfin/Emby afectada (si has puesto las API keys).
+
 ## Actualizar
 
 ```bash
