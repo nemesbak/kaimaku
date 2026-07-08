@@ -1,27 +1,31 @@
 services:
   kaimaku:
     build: .
-    container_name: ${CONTAINER_NAME:-kaimaku}
+    container_name: kaimaku
     ports:
-      - "${PORT:-8098}:8098"
+      - "8098:8098"   # <-- puerto donde abrirás Kaimaku: http://IP-DEL-SERVIDOR:8098
     environment:
-      MEDIA_ROOTS: "${MEDIA_ROOTS:-/media/anime}"
+      # Bibliotecas a mostrar, separadas por comas. Rutas DENTRO del contenedor
+      # (relativas al /media de "volumes" de abajo, no a tu ruta real del host).
+      MEDIA_ROOTS: "/media/anime,/media/series,/media/peliculas"
       DATA_DIR: "/data"
-      JELLYFIN_URL: "${JELLYFIN_URL:-http://host.docker.internal:8096}"
-      JELLYFIN_API_KEY: "${JELLYFIN_API_KEY:-}"
-      EMBY_URL: "${EMBY_URL:-http://host.docker.internal:8097}"
-      EMBY_API_KEY: "${EMBY_API_KEY:-}"
+      # Jellyfin/Emby son opcionales: sin API key, todo funciona igual pero se
+      # omite el refresco automático de biblioteca tras instalar.
+      # host.docker.internal apunta al propio host Docker (sirve si Jellyfin/Emby
+      # corren en el host o como contenedores normales). API key: Panel de
+      # control → API Keys → Nueva clave.
+      JELLYFIN_URL: "http://host.docker.internal:8096"
+      JELLYFIN_API_KEY: ""
+      EMBY_URL: "http://host.docker.internal:8097"
+      EMBY_API_KEY: ""
     extra_hosts:
-      # Lets the container reach Jellyfin/Emby on the host even though they're
-      # not on this compose file's network. Not needed if you add them as
-      # services in this same file, or use network_mode: host.
       - "host.docker.internal:host-gateway"
     volumes:
-      # Point these at your real media share and a small folder for state
-      # (backups + job scratch space). Defaults below are only sane for a
-      # quick local try-out.
-      - ${MEDIA_HOST_PATH:-./media}:/media
-      - ${DATA_HOST_PATH:-./data}:/data
+      # <-- CAMBIA ESTA: la ruta REAL de tu biblioteca en el host (donde están
+      # tus carpetas anime/, series/, peliculas/...). Se monta como /media.
+      - /mnt/user/datos/media:/media
+      # Carpeta pequeña para backups y descargas en curso. No hace falta tocarla.
+      - ./data:/data
     restart: unless-stopped
     # Job/autopilot state lives in memory only (simple, nothing to corrupt) —
     # on shutdown the app waits up to 25s for an in-progress download to finish

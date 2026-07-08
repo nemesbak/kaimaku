@@ -1,58 +1,101 @@
 # 開幕 Kaimaku
 
-**Kaimaku** (開幕, "se alza el telón") es una app web para Jellyfin y Emby que busca, puntúa e instala automáticamente los openings/temas de tus series y películas — genera `theme-music/song1.mp3` y `backdrops/intro.mp4` en cada carpeta, priorizando fuentes oficiales y en español/castellano/latino cuando existen.
+Instala automáticamente los openings/temas (`theme-music/song1.mp3` y `backdrops/intro.mp4`) de tus series y películas en Jellyfin/Emby, buscándolos en YouTube y priorizando fuentes oficiales en español/castellano/latino.
 
 ![status](https://img.shields.io/badge/estado-uso%20personal-blue)
 
-```text
-Serie o Película
-├── theme-music
-│   └── song1.mp3
-└── backdrops
-    └── intro.mp4
-```
+## Instalar
 
-## Instalación
+Requisito único: Docker + Docker Compose v2 (`docker compose`, no `docker-compose`).
 
-Requisito único: Docker + Docker Compose v2 (`docker compose`, no `docker-compose`). Si no lo tienes, mira [cómo instalarlo](docker-app/README.md#instalar-docker-si-no-lo-tienes-ya).
+**1. Clona el repositorio**
 
 ```bash
 git clone https://github.com/nemesbak/kaimaku.git
 cd kaimaku/docker-app
-cp .env.example .env
 ```
 
-Abre `.env` y cambia como mínimo `MEDIA_HOST_PATH` por la ruta real de tu biblioteca. El resto de valores por defecto funcionan tal cual.
+**2. Edita `docker-app/docker-compose.yml`**
+
+Este es el archivo completo, tal cual viene en el repo — no hay ningún `.env` aparte, todo está aquí:
+
+```yaml
+services:
+  kaimaku:
+    build: .
+    container_name: kaimaku
+    ports:
+      - "8098:8098"   # <-- puerto donde abrirás Kaimaku: http://IP-DEL-SERVIDOR:8098
+    environment:
+      # Bibliotecas a mostrar, separadas por comas. Rutas DENTRO del contenedor
+      # (relativas al /media de "volumes" de abajo, no a tu ruta real del host).
+      MEDIA_ROOTS: "/media/anime,/media/series,/media/peliculas"
+      DATA_DIR: "/data"
+      # Jellyfin/Emby son opcionales: sin API key, todo funciona igual pero se
+      # omite el refresco automático de biblioteca tras instalar.
+      # host.docker.internal apunta al propio host Docker (sirve si Jellyfin/Emby
+      # corren en el host o como contenedores normales). API key: Panel de
+      # control → API Keys → Nueva clave.
+      JELLYFIN_URL: "http://host.docker.internal:8096"
+      JELLYFIN_API_KEY: ""
+      EMBY_URL: "http://host.docker.internal:8097"
+      EMBY_API_KEY: ""
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # <-- CAMBIA ESTA: la ruta REAL de tu biblioteca en el host (donde están
+      # tus carpetas anime/, series/, peliculas/...). Se monta como /media.
+      - /mnt/user/datos/media:/media
+      # Carpeta pequeña para backups y descargas en curso. No hace falta tocarla.
+      - ./data:/data
+    restart: unless-stopped
+    # Job/autopilot state lives in memory only (simple, nothing to corrupt) —
+    # on shutdown the app waits up to 25s for an in-progress download to finish
+    # before exiting. Keep this above that so it isn't SIGKILLed mid-wait.
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+```
+
+Lo único que **tienes** que cambiar es la línea marcada `<-- CAMBIA ESTA`, por la ruta real de tu biblioteca. `MEDIA_ROOTS`, el puerto y Jellyfin/Emby ya vienen con valores que funcionan tal cual (ajústalos solo si quieres refresco automático o rutas distintas).
+
+**3. Levanta el contenedor**
 
 ```bash
 docker compose up -d --build
 ```
 
-Abre `http://IP-DEL-SERVIDOR:8098` y ya está.
+**4. Abre la app**
 
-Guía completa (todas las variables de `.env`, arquitectura, solución de problemas) en **[`docker-app/README.md`](docker-app/README.md)**.
+```text
+http://IP-DEL-SERVIDOR:8098
+```
 
-## Funciones
+## Actualizar
 
-- Ve todas las bibliotecas configuradas (anime, series, películas...), con filtro "sin tema / con tema".
-- **Modo manual**: eliges destino, la búsqueda automática construye varias consultas en YouTube, puntúa los resultados y preselecciona el mejor candidato para que lo revises antes de instalar.
-- **Modo autopiloto**: eliges una biblioteca completa (o un destino) y un umbral mínimo de confianza — Kaimaku busca, puntúa e instala cada ítem automáticamente solo si supera el umbral.
-- Cola de instalación en tiempo real, cancelar/reintentar en cualquier momento.
-- Backup automático del archivo existente antes de sobrescribirlo.
-- Refresca solo la biblioteca de Jellyfin/Emby afectada tras instalar (si configuras las API keys).
+```bash
+git pull
+docker compose up -d --build
+```
 
-## Cómo puntúa los candidatos
+## Desinstalar
 
-- `+` título oficial / canal conocido (Crunchyroll, Aniplex, Toho...)
-- `+` contiene "opening"/"OP"/"theme"
-- `+` español, castellano, latino
-- `+` duración corta (opening real, no el episodio completo)
-- `−` reaction, cover, piano, AMV, nightcore, review
+```bash
+docker compose down
+```
 
-## Notas
+Tu biblioteca de medios no se toca; solo se borra el contenedor.
 
-- Kaimaku es deliberadamente prudente: busca y muestra candidatos antes de descargar nada; la instalación final siempre es un paso explícito que tú confirmas (o un umbral de confianza que tú eliges en autopiloto).
-- Descarga contenido de YouTube para uso personal en tu propio servidor de medios — respeta los términos de uso de YouTube y los derechos del contenido que descargues.
+## Solución de problemas
+
+**Las descargas fallan con `HTTP Error 403: Forbidden` o mencionan "JavaScript runtime"/"EJS"**
+YouTube exige ejecutar JavaScript para resolver el cifrado de sus URLs de vídeo. La imagen ya trae lo necesario para esto — comprueba que estás en la última versión (`git pull && docker compose up -d --build`).
+
+**No refresca Jellyfin/Emby tras instalar**
+Comprueba que `JELLYFIN_API_KEY`/`EMBY_API_KEY` están rellenas en `docker-compose.yml` y que `JELLYFIN_URL`/`EMBY_URL` son alcanzables desde el contenedor, no solo desde tu navegador.
 
 ## Licencia
 
