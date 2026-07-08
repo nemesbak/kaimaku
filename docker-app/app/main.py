@@ -584,6 +584,20 @@ def startup() -> None:
     thread.start()
 
 
+@app.on_event("shutdown")
+def shutdown() -> None:
+    # Jobs/autopilot state is in-memory only, so a restart mid-download would
+    # otherwise silently kill it partway through. Give the current job (if any)
+    # a chance to finish first — bounded, so a stuck job can't block shutdown
+    # forever. Keep docker-compose's stop_grace_period comfortably above this.
+    if not any(j.status == "running" for j in jobs.values()):
+        return
+    print("shutdown: waiting for the running job to finish before exiting...", flush=True)
+    deadline = time.time() + 25
+    while any(j.status == "running" for j in jobs.values()) and time.time() < deadline:
+        time.sleep(0.5)
+
+
 @app.get("/", response_class=HTMLResponse)
 def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")

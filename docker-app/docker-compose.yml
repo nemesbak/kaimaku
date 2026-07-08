@@ -1,9 +1,9 @@
 services:
-  anime-theme-sync:
+  kaimaku:
     build: .
-    container_name: anime-theme-sync
+    container_name: ${CONTAINER_NAME:-kaimaku}
     ports:
-      - "8098:8098"
+      - "${PORT:-8098}:8098"
     environment:
       MEDIA_ROOTS: "${MEDIA_ROOTS:-/media/anime}"
       DATA_DIR: "/data"
@@ -12,8 +12,23 @@ services:
       EMBY_URL: "${EMBY_URL:-http://host.docker.internal:8097}"
       EMBY_API_KEY: "${EMBY_API_KEY:-}"
     extra_hosts:
+      # Lets the container reach Jellyfin/Emby on the host even though they're
+      # not on this compose file's network. Not needed if you add them as
+      # services in this same file, or use network_mode: host.
       - "host.docker.internal:host-gateway"
     volumes:
-      - /mnt/user/datos/media:/media
-      - /mnt/user/datos/media/_theme_tools/anime-theme-sync-ui:/data
+      # Point these at your real media share and a small folder for state
+      # (backups + job scratch space). Defaults below are only sane for a
+      # quick local try-out.
+      - ${MEDIA_HOST_PATH:-./media}:/media
+      - ${DATA_HOST_PATH:-./data}:/data
     restart: unless-stopped
+    # Job/autopilot state lives in memory only (simple, nothing to corrupt) —
+    # on shutdown the app waits up to 25s for an in-progress download to finish
+    # before exiting. Keep this above that so it isn't SIGKILLed mid-wait.
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
