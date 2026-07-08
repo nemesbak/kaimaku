@@ -10,7 +10,7 @@ from pathlib import Path
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--stage-root", default="/tmp/anime-theme-staged")
+    parser.add_argument("--stage-root", default="staged")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--backup-existing", action="store_true")
     parser.add_argument("--backup-root", default="")
@@ -18,7 +18,7 @@ def main() -> int:
     args = parser.parse_args()
 
     stage_root = Path(args.stage_root)
-    backup_root = Path(args.backup_root) if args.backup_root else Path("/mnt/user/datos/media/_theme_duplicate_backup") / datetime.now().strftime("%Y%m%d-%H%M%S-install")
+    backup_root = Path(args.backup_root) if args.backup_root else stage_root.parent / "kaimaku-backups" / datetime.now().strftime("%Y%m%d-%H%M%S-install")
     manifest = json.loads((stage_root / "manifest.json").read_text(encoding="utf-8"))
     installed = []
     skipped = []
