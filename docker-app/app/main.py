@@ -351,6 +351,15 @@ class JobRequest(BaseModel):
     refresh: bool = True
 
 
+class AutopilotRequest(BaseModel):
+    library: str | None = None
+    destination: str | None = None
+    assets: list[Literal["audio", "video"]] = Field(default_factory=lambda: ["audio", "video"])
+    min_score: float = 0.75
+    overwrite: bool = False
+    refresh: bool = True
+
+
 @dataclass
 class Job:
     id: str
@@ -369,6 +378,24 @@ job_queue: "queue.Queue[str]" = queue.Queue()
 event_subscribers: list[asyncio.Queue[str]] = []
 
 
+@dataclass
+class AutopilotRun:
+    id: str
+    scope: str
+    total: int
+    status: str = "running"
+    processed: int = 0
+    queued: list[str] = field(default_factory=list)
+    skipped: list[dict[str, Any]] = field(default_factory=list)
+    logs: list[str] = field(default_factory=list)
+    created_at: float = field(default_factory=time.time)
+    updated_at: float = field(default_factory=time.time)
+
+
+autopilot_runs: dict[str, AutopilotRun] = {}
+autopilot_cancelled: set[str] = set()
+
+
 def emit_event(payload: dict[str, Any]) -> None:
     data = json.dumps(payload, ensure_ascii=False)
     for subscriber in list(event_subscribers):
@@ -382,6 +409,54 @@ def job_log(job: Job, message: str) -> None:
     job.logs.append(f"{datetime.now().strftime('%H:%M:%S')} {message}")
     job.updated_at = time.time()
     emit_event({"type": "job", "job": asdict(job)})
+
+
+def autopilot_log(run: AutopilotRun, message: str) -> None:
+    run.logs.append(f"{datetime.now().strftime('%H:%M:%S')} {message}")
+    run.updated_at = time.time()
+    emit_event({"type": "autopilot", "run": asdict(run)})
+
+
+def autopilot_worker(run_id: str, items: list[dict[str, Any]], req: AutopilotRequest) -> None:
+    run = autopilot_runs[run_id]
+    for item in items:
+        if run_id in autopilot_cancelled:
+            run.status = "cancelled"
+            autopilot_log(run, "Autopiloto cancelado")
+            break
+
+        run.processed += 1
+        needed = list(req.assets)
+        if not req.overwrite:
+            needed = [a for a in needed if not (a == "audio" and item["has_audio"]) and not (a == "video" and item["has_video"])]
+        if not needed:
+            run.skipped.append({"name": item["name"], "reason": "ya instalado"})
+            autopilot_log(run, f"Omitido (ya instalado): {item['name']}")
+            continue
+
+        try:
+            _, _, candidates = auto_search_candidates(Path(item["path"]))
+        except Exception as exc:
+            run.skipped.append({"name": item["name"], "reason": str(exc)})
+            autopilot_log(run, f"Error buscando {item['name']}: {exc}")
+            continue
+
+        best = candidates[0] if candidates else None
+        if not best or best["score"] < req.min_score:
+            pct = round(best["score"] * 100) if best else 0
+            run.skipped.append({"name": item["name"], "reason": f"mejor candidato {pct}% < umbral"})
+            autopilot_log(run, f"Omitido (sin candidato fiable, {pct}%): {item['name']}")
+            continue
+
+        job = _enqueue(best["webpage_url"], item["path"], needed, req.refresh)
+        run.queued.append(job.id)
+        autopilot_log(run, f"Encolado ({round(best['score'] * 100)}%): {item['name']} <- {best['title']}")
+        time.sleep(1.5)
+
+    autopilot_cancelled.discard(run_id)
+    if run.status == "running":
+        run.status = "done"
+        autopilot_log(run, f"Autopiloto completado: {len(run.queued)} encolados, {len(run.skipped)} omitidos")
 
 
 def worker_loop() -> None:
@@ -557,10 +632,8 @@ def _auto_search_one_query(query: str) -> list[dict[str, Any]]:
     return videos
 
 
-@app.post("/api/auto-search")
-def auto_search(req: AutoSearchRequest) -> dict[str, Any]:
-    dest = ensure_inside_roots(Path(req.destination))
-    name, year = parse_folder_name(dest.name)
+def auto_search_candidates(destination: Path, limit: int = 8) -> tuple[str, int | None, list[dict[str, Any]]]:
+    name, year = parse_folder_name(destination.name)
     queries = build_auto_queries(name)
 
     seen: set[str] = set()
@@ -592,8 +665,14 @@ def auto_search(req: AutoSearchRequest) -> dict[str, Any]:
                     }
                 )
     candidates.sort(key=lambda c: c["score"], reverse=True)
-    limit = max(1, min(req.limit, 15))
-    return {"name": name, "year": year, "results": candidates[:limit]}
+    return name, year, candidates[: max(1, min(limit, 15))]
+
+
+@app.post("/api/auto-search")
+def auto_search(req: AutoSearchRequest) -> dict[str, Any]:
+    dest = ensure_inside_roots(Path(req.destination))
+    name, year, results = auto_search_candidates(dest, req.limit)
+    return {"name": name, "year": year, "results": results}
 
 
 def _enqueue(url: str, destination: str, assets: list[str], refresh: bool) -> Job:
@@ -612,6 +691,51 @@ def create_job(req: JobRequest) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="select at least one asset")
     job = _enqueue(req.url, req.destination, req.assets, req.refresh)
     return {"job": asdict(job)}
+
+
+@app.post("/api/autopilot")
+def start_autopilot(req: AutopilotRequest) -> dict[str, Any]:
+    if not req.assets:
+        raise HTTPException(status_code=400, detail="select at least one asset")
+
+    if req.destination:
+        target = ensure_inside_roots(Path(req.destination))
+        items = [i for i in media_items() if i["path"] == safe_rel(target)]
+        scope = items[0]["name"] if items else target.name
+    elif req.library:
+        items = [i for i in media_items() if i["library"] == req.library]
+        scope = f"biblioteca {req.library}"
+    else:
+        raise HTTPException(status_code=400, detail="especifica library o destination")
+
+    if not items:
+        raise HTTPException(status_code=404, detail="no se encontraron destinos para ese ámbito")
+
+    run = AutopilotRun(id=uuid.uuid4().hex[:12], scope=scope, total=len(items))
+    autopilot_runs[run.id] = run
+    emit_event({"type": "autopilot", "run": asdict(run)})
+    thread = threading.Thread(target=autopilot_worker, args=(run.id, items, req), daemon=True)
+    thread.start()
+    return {"run": asdict(run)}
+
+
+@app.get("/api/autopilot/{run_id}")
+def get_autopilot(run_id: str) -> dict[str, Any]:
+    run = autopilot_runs.get(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="run not found")
+    return {"run": asdict(run)}
+
+
+@app.post("/api/autopilot/{run_id}/cancel")
+def cancel_autopilot(run_id: str) -> dict[str, Any]:
+    run = autopilot_runs.get(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="run not found")
+    if run.status != "running":
+        raise HTTPException(status_code=400, detail="el autopiloto ya ha terminado")
+    autopilot_cancelled.add(run_id)
+    return {"run": asdict(run)}
 
 
 @app.get("/api/jobs")

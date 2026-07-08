@@ -22,16 +22,26 @@
 
       <section class="grid">
         <section class="panel compose">
+          <div class="modeTabs">
+            <button id="modeManualBtn" type="button" class="modeTab selected">Manual</button>
+            <button id="modeAutoBtn" type="button" class="modeTab">🤖 Autopiloto</button>
+          </div>
+
           <ol class="steps">
-            <li class="stepItem" data-step="1">
+            <li class="stepItem hasConnector" data-step="1">
               <span class="stepLabel">Destino <span id="itemCount" class="stepCount"></span></span>
 
               <div id="libraryTabs" class="libraryTabs"></div>
               <input id="destinationFilter" class="destFilter" type="search" placeholder="Buscar serie o película..." />
+              <div class="statusTabs">
+                <button type="button" class="statusTab selected" data-status="all">Todos</button>
+                <button type="button" class="statusTab" data-status="missing">Sin tema</button>
+                <button type="button" class="statusTab" data-status="has">Con tema</button>
+              </div>
               <div id="destinations" class="destinations"></div>
             </li>
 
-            <li class="stepItem" data-step="2">
+            <li id="manualStep2" class="stepItem hasConnector" data-step="2">
               <span class="stepLabel">Opening</span>
 
               <button id="autoSearchBtn" type="button" class="primary autoSearch" disabled>
@@ -64,7 +74,7 @@
               </details>
             </li>
 
-            <li class="stepItem" data-step="3">
+            <li id="manualStep3" class="stepItem" data-step="3">
               <span class="stepLabel">Instalar</span>
 
               <div class="chips">
@@ -76,6 +86,37 @@
               <button id="enqueueBtn" class="primary">Añadir a cola</button>
               <p id="formMsg" class="message"></p>
             </li>
+
+            <li id="autoStep2" class="stepItem" data-step="2" hidden>
+              <span class="stepLabel">Autopiloto</span>
+
+              <div class="scopeChoice">
+                <label>
+                  <input type="radio" name="autoScope" value="library" checked />
+                  Biblioteca completa: <strong id="autoScopeLibrary">elige una pestaña de biblioteca arriba</strong>
+                </label>
+                <label>
+                  <input type="radio" name="autoScope" value="single" />
+                  Solo lo seleccionado: <strong id="autoScopeSingle">—</strong>
+                </label>
+              </div>
+
+              <div class="chips">
+                <label class="chip"><input id="autoAssetAudio" type="checkbox" checked /> Audio</label>
+                <label class="chip"><input id="autoAssetVideo" type="checkbox" checked /> Video</label>
+                <label class="chip"><input id="autoOverwrite" type="checkbox" /> Sobrescribir existentes</label>
+                <label class="chip"><input id="autoRefresh" type="checkbox" checked /> Refrescar bibliotecas</label>
+              </div>
+
+              <label class="field">
+                <span>Confianza mínima para instalar sin revisar: <b id="autoThresholdLabel">75%</b></span>
+                <input id="autoThreshold" type="range" min="40" max="95" step="5" value="75" />
+              </label>
+              <p class="hint">Por debajo del umbral, ese destino se omite en vez de instalar algo dudoso.</p>
+
+              <button id="autopilotStartBtn" type="button" class="primary">🤖 Iniciar autopiloto</button>
+              <p id="autoMsg" class="message"></p>
+            </li>
           </ol>
         </section>
 
@@ -84,6 +125,7 @@
             <h2>Cola</h2>
             <span id="queueCount" class="pill">0 jobs</span>
           </div>
+          <div id="autopilotStatus" class="autopilotStatus" hidden></div>
           <div id="jobs" class="jobs"></div>
         </section>
       </section>

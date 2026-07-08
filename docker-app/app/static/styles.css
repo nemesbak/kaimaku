@@ -161,6 +161,34 @@ p {
   white-space: nowrap;
 }
 
+/* ---------- mode tabs ---------- */
+
+.modeTabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 22px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px;
+  width: fit-content;
+}
+
+.modeTab {
+  border: none;
+  background: transparent;
+  min-height: 32px;
+  padding: 0 16px;
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.modeTab.selected {
+  background: var(--accent);
+  color: #04140e;
+  font-weight: 700;
+}
+
 /* ---------- stepper ---------- */
 
 .steps {
@@ -193,7 +221,7 @@ p {
   place-items: center;
 }
 
-.stepItem:not(:last-child)::after {
+.stepItem.hasConnector::after {
   content: "";
   position: absolute;
   left: 9px;
@@ -344,6 +372,85 @@ p {
 .libTab.selected {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+.statusTabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.statusTab {
+  min-height: 26px;
+  padding: 0 10px;
+  font-size: 11px;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.statusTab.selected {
+  background: var(--panel-2);
+  color: var(--text);
+  border-color: var(--accent-2);
+}
+
+/* ---------- autopilot scope / options ---------- */
+
+.scopeChoice {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+  font-size: 13px;
+}
+
+.scopeChoice label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.scopeChoice input {
+  width: auto;
+  min-height: auto;
+  accent-color: var(--accent);
+}
+
+.scopeChoice strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+  background: transparent;
+  min-height: 24px;
+  padding: 0;
+  border: none;
+}
+
+.autopilotBar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  overflow: hidden;
+  margin: 0 12px 10px;
+}
+
+.autopilotBarFill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+
+.autopilotStatus {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+  background: var(--sunken);
+  overflow: hidden;
 }
 
 /* ---------- primary CTA ---------- */

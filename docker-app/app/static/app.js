@@ -2,11 +2,14 @@ const state = {
   items: [],
   selectedDestination: "",
   libraryFilter: "",
+  statusFilter: "all",
+  mode: "manual",
   preview: null,
   jobs: [],
   searchResults: [],
   selectedResultId: "",
   expandedJobs: new Set(),
+  autopilotRun: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -18,8 +21,8 @@ function fmtDuration(seconds) {
   return `${m}:${s}`;
 }
 
-function setMessage(text, kind = "") {
-  const el = $("formMsg");
+function setMessage(text, kind = "", targetId = "formMsg") {
+  const el = $(targetId);
   el.textContent = text;
   el.className = `message ${kind}`;
 }
@@ -65,16 +68,35 @@ function renderLibraryTabs() {
   }
 }
 
+function matchesStatus(item) {
+  if (state.statusFilter === "missing") return !item.has_audio || !item.has_video;
+  if (state.statusFilter === "has") return item.has_audio && item.has_video;
+  return true;
+}
+
+function updateAutoScopeLabels() {
+  if (state.libraryFilter) {
+    const count = state.items.filter((i) => i.library === state.libraryFilter).length;
+    $("autoScopeLibrary").textContent = `${state.libraryFilter} (${count} ítems)`;
+  } else {
+    $("autoScopeLibrary").textContent = "elige una pestaña de biblioteca arriba";
+  }
+  const selected = state.items.find((i) => i.path === state.selectedDestination);
+  $("autoScopeSingle").textContent = selected ? selected.name : "—";
+}
+
 function renderItems() {
   const filter = $("destinationFilter").value.toLowerCase();
   const list = $("destinations");
   const items = state.items.filter(
     (item) =>
       (!state.libraryFilter || item.library === state.libraryFilter) &&
+      matchesStatus(item) &&
       (item.name.toLowerCase().includes(filter) || item.path.toLowerCase().includes(filter))
   );
   $("itemCount").textContent = `${items.length}/${state.items.length}`;
   list.innerHTML = "";
+  updateAutoScopeLabels();
 
   for (const item of items.slice(0, 120)) {
     const row = document.createElement("button");
@@ -99,6 +121,15 @@ function renderItems() {
     });
     list.appendChild(row);
   }
+}
+
+function setMode(mode) {
+  state.mode = mode;
+  $("modeManualBtn").classList.toggle("selected", mode === "manual");
+  $("modeAutoBtn").classList.toggle("selected", mode === "auto");
+  $("manualStep2").hidden = mode !== "manual";
+  $("manualStep3").hidden = mode !== "manual";
+  $("autoStep2").hidden = mode !== "auto";
 }
 
 async function loadItems() {
@@ -291,6 +322,95 @@ async function retryJob(jobId) {
   }
 }
 
+const AUTOPILOT_STATUS_LABELS = {
+  running: "en curso",
+  done: "completado",
+  cancelled: "cancelado",
+};
+
+function renderAutopilotStatus() {
+  const box = $("autopilotStatus");
+  const run = state.autopilotRun;
+  if (!run) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  const lastLog = (run.logs || [])[run.logs.length - 1] || "";
+  const isRunning = run.status === "running";
+  const pct = run.total ? Math.round((run.processed / run.total) * 100) : 0;
+  box.innerHTML = `
+    <div class="jobHead">
+      <div class="jobTitle">
+        <strong>🤖 ${run.scope}</strong>
+        <span>${run.processed}/${run.total} · ${run.queued.length} encolados · ${run.skipped.length} omitidos</span>
+      </div>
+      <span class="status ${run.status}">${AUTOPILOT_STATUS_LABELS[run.status] || run.status}</span>
+    </div>
+    <div class="autopilotBar"><div class="autopilotBarFill" style="width:${pct}%"></div></div>
+    <div class="jobMeta">
+      <span class="lastLog">${lastLog}</span>
+      ${isRunning ? `<button type="button" class="ghost small" id="autopilotCancelBtn">Detener</button>` : ""}
+    </div>
+  `;
+  if (isRunning) {
+    $("autopilotCancelBtn").addEventListener("click", cancelAutopilot);
+  }
+}
+
+async function cancelAutopilot() {
+  if (!state.autopilotRun) return;
+  try {
+    await api(`/api/autopilot/${state.autopilotRun.id}/cancel`, { method: "POST" });
+  } catch (err) {
+    setMessage(`No se pudo detener: ${err.message}`, "error", "autoMsg");
+  }
+}
+
+async function startAutopilot() {
+  const scope = document.querySelector('input[name="autoScope"]:checked').value;
+  const assets = [];
+  if ($("autoAssetAudio").checked) assets.push("audio");
+  if ($("autoAssetVideo").checked) assets.push("video");
+  if (!assets.length) {
+    setMessage("Marca al menos audio o video.", "error", "autoMsg");
+    return;
+  }
+
+  const body = {
+    assets,
+    min_score: Number($("autoThreshold").value) / 100,
+    overwrite: $("autoOverwrite").checked,
+    refresh: $("autoRefresh").checked,
+  };
+  if (scope === "library") {
+    if (!state.libraryFilter) {
+      setMessage("Elige una pestaña de biblioteca arriba primero.", "error", "autoMsg");
+      return;
+    }
+    body.library = state.libraryFilter;
+  } else {
+    if (!state.selectedDestination) {
+      setMessage("Elige una serie o película en el paso 1.", "error", "autoMsg");
+      return;
+    }
+    body.destination = state.selectedDestination;
+  }
+
+  $("autopilotStartBtn").disabled = true;
+  setMessage("Iniciando autopiloto...", "", "autoMsg");
+  try {
+    const data = await api("/api/autopilot", { method: "POST", body: JSON.stringify(body) });
+    state.autopilotRun = data.run;
+    renderAutopilotStatus();
+    setMessage(`Autopiloto en marcha sobre ${data.run.total} destino(s).`, "success", "autoMsg");
+  } catch (err) {
+    setMessage(`No se pudo iniciar: ${err.message}`, "error", "autoMsg");
+  } finally {
+    $("autopilotStartBtn").disabled = false;
+  }
+}
+
 const STATUS_LABELS = {
   queued: "en cola",
   running: "en curso",
@@ -369,6 +489,12 @@ function connectEvents() {
       renderJobs();
       loadItems().catch(() => {});
     }
+    if (payload.type === "autopilot") {
+      if (!state.autopilotRun || state.autopilotRun.id === payload.run.id) {
+        state.autopilotRun = payload.run;
+        renderAutopilotStatus();
+      }
+    }
   });
 }
 
@@ -385,6 +511,19 @@ $("searchQuery").addEventListener("keydown", (ev) => {
   }
 });
 $("jobs").addEventListener("click", onJobsClick);
+$("modeManualBtn").addEventListener("click", () => setMode("manual"));
+$("modeAutoBtn").addEventListener("click", () => setMode("auto"));
+document.querySelectorAll(".statusTab").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    state.statusFilter = btn.dataset.status;
+    document.querySelectorAll(".statusTab").forEach((b) => b.classList.toggle("selected", b === btn));
+    renderItems();
+  });
+});
+$("autoThreshold").addEventListener("input", () => {
+  $("autoThresholdLabel").textContent = `${$("autoThreshold").value}%`;
+});
+$("autopilotStartBtn").addEventListener("click", startAutopilot);
 
 loadItems().catch((err) => setMessage(err.message, "error"));
 loadJobs().catch(() => {});

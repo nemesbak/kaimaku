@@ -6,12 +6,12 @@
 
 ## Funciones
 
-- Ve todas las bibliotecas configuradas en `MEDIA_ROOTS` (anime, series, películas...), con pestañas para filtrar.
-- **Búsqueda automática**: para la serie/película elegida, construye varias búsquedas en YouTube (`opening español castellano`, `opening oficial`, etc.), puntúa los resultados priorizando fuentes oficiales y español/castellano/latino, y preselecciona el mejor candidato.
-- Búsqueda manual y pegar un enlace directo como alternativas, si la automática no encuentra lo que buscas.
+- Ve todas las bibliotecas configuradas en `MEDIA_ROOTS` (anime, series, películas...), con pestañas para filtrar y un filtro rápido "sin tema / con tema".
+- **Modo manual**: eliges destino, la búsqueda automática construye varias consultas en YouTube (`opening español castellano`, `opening oficial`, etc.), puntúa los resultados priorizando fuentes oficiales y español/castellano/latino, y preselecciona el mejor candidato para que lo revises antes de instalar. Búsqueda manual y pegar un enlace directo como alternativas.
+- **Modo autopiloto**: elige una biblioteca completa o un único destino, un umbral mínimo de confianza y qué instalar — y lo procesa entero sin más clics. Cada ítem se busca, se puntúa y se instala automáticamente solo si supera el umbral; si no, se omite (nunca instala algo dudoso). Progreso en vivo y botón de detener en cualquier momento.
 - Cola de instalación en tiempo real con logs por trabajo, cancelar jobs en curso/en cola y reintentar los fallidos.
-- Backup automático del archivo existente antes de sobrescribirlo.
-- Refresca las bibliotecas de Jellyfin/Emby tras instalar, si configuras las API keys.
+- Backup automático del archivo existente antes de sobrescribirlo (el autopiloto no sobrescribe destinos ya instalados salvo que actives "Sobrescribir existentes").
+- Refresca solo la biblioteca de Jellyfin/Emby afectada tras instalar (no un escaneo completo del servidor), si configuras las API keys.
 
 ## Puesta en marcha
 
