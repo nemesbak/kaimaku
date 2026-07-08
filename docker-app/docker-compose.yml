@@ -31,8 +31,3 @@ services:
     # on shutdown the app waits up to 25s for an in-progress download to finish
     # before exiting. Keep this above that so it isn't SIGKILLed mid-wait.
     stop_grace_period: 30s
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
