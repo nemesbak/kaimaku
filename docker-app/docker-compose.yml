@@ -5,12 +5,12 @@ services:
     ports:
       - "8098:8098"   # <-- puerto donde abrirás Kaimaku: http://IP-DEL-SERVIDOR:8098
     environment:
-      # Bibliotecas a mostrar, separadas por comas. Son subcarpetas DENTRO del
-      # contenedor (relativas al /media que mapeas abajo en "volumes"), NO tu
-      # ruta real del host. Ejemplo: si tu carpeta real es
-      # /mnt/user/datos/media/anime, aquí solo pones "/media/anime" (el
-      # "/mnt/user/datos/media" ya se traduce a "/media" en el volumen de abajo).
-      MEDIA_ROOTS: "/media/anime,/media/series,/media/peliculas"
+      # No hace falta tocar nada aquí: Kaimaku detecta solo cada subcarpeta que
+      # encuentre dentro de /media (anime/, series/, peliculas/... con el
+      # nombre que sea) y la trata como una biblioteca. Solo rellena
+      # MEDIA_ROOTS si quieres limitarlo a carpetas concretas (separadas por
+      # comas, rutas DENTRO del contenedor, ej: "/media/anime,/media/series").
+      MEDIA_ROOTS: ""
       DATA_DIR: "/data"
       # Jellyfin/Emby son opcionales: sin API key, todo funciona igual pero se
       # omite el refresco automático de biblioteca tras instalar (tendrás que
@@ -26,9 +26,10 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      # <-- CAMBIA ESTA: la ruta REAL de tu biblioteca en el host, la carpeta
-      # que POR DENTRO contiene anime/, series/, peliculas/... (o los nombres
-      # que hayas puesto arriba en MEDIA_ROOTS). Ejemplos según dónde corra esto:
+      # <-- CAMBIA ESTA (es el ÚNICO cambio necesario para instalar Kaimaku):
+      # la ruta REAL de tu biblioteca en el host, la carpeta que POR DENTRO
+      # contiene anime/, series/, peliculas/... (los nombres que sean, no hace
+      # falta que coincidan con nada). Ejemplos según dónde corra esto:
       #   Unraid:   /mnt/user/datos/media
       #   Synology: /volume1/media
       #   TrueNAS:  /mnt/pool/media

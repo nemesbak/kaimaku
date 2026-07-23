@@ -5,7 +5,8 @@ FROM python:3.12-slim
 ENV PYTHONUNBUFFERED=1 \
     APP_HOME=/app \
     DATA_DIR=/data \
-    MEDIA_ROOTS=/media
+    MEDIA_BASE=/media \
+    MEDIA_ROOTS=
 
 # yt-dlp needs a JS runtime to deobfuscate YouTube's signature cipher;
 # without it, downloads fail with "HTTP Error 403: Forbidden".

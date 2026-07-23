@@ -33,7 +33,32 @@ DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 BACKUP_DIR = DATA_DIR / "backups"
 WORK_DIR = DATA_DIR / "work"
 
-MEDIA_ROOTS = [Path(p) for p in os.environ.get("MEDIA_ROOTS", "/media").split(",") if p.strip()]
+MEDIA_BASE = Path(os.environ.get("MEDIA_BASE", "/media"))
+_media_roots_env = os.environ.get("MEDIA_ROOTS", "").strip()
+_explicit_media_roots = [Path(p) for p in _media_roots_env.split(",") if p.strip()] or None
+
+
+def discover_media_roots() -> list[Path]:
+    """Auto-detect libraries as the immediate subfolders of /media, so a fresh
+    install works without having to know or type any folder names — only
+    MEDIA_BASE (i.e. the volume mapped to /media) has to be right. Falls back
+    to treating /media itself as a single library if it has no subfolders
+    (or doesn't exist yet), so the status panel still has something to report.
+    """
+    if not MEDIA_BASE.is_dir():
+        return [MEDIA_BASE]
+    subdirs = sorted(
+        (p for p in MEDIA_BASE.iterdir() if p.is_dir() and not p.name.startswith((".", "_"))),
+        key=lambda p: p.name.lower(),
+    )
+    return subdirs or [MEDIA_BASE]
+
+
+def current_media_roots() -> list[Path]:
+    # Recomputed on every call (auto-discovery must reflect subfolders added later
+    # without needing a restart); MEDIA_ROOTS itself is read once since it's a
+    # deliberate user override.
+    return _explicit_media_roots if _explicit_media_roots is not None else discover_media_roots()
 
 THEME_AUDIO = Path("theme-music/song1.mp3")
 THEME_VIDEO = Path("backdrops/intro.mp4")
@@ -54,7 +79,7 @@ def safe_rel(path: Path) -> str:
 
 def ensure_inside_roots(path: Path) -> Path:
     resolved = path.resolve()
-    for root in MEDIA_ROOTS:
+    for root in current_media_roots():
         try:
             resolved.relative_to(root.resolve())
             return resolved
@@ -65,7 +90,7 @@ def ensure_inside_roots(path: Path) -> Path:
 
 def media_root_name(path: Path) -> str | None:
     resolved = path.resolve()
-    for root in MEDIA_ROOTS:
+    for root in current_media_roots():
         try:
             resolved.relative_to(root.resolve())
             return root.name
@@ -76,7 +101,7 @@ def media_root_name(path: Path) -> str | None:
 
 def media_items() -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
-    for root in MEDIA_ROOTS:
+    for root in current_media_roots():
         if not root.exists():
             continue
         for child in sorted(p for p in root.iterdir() if p.is_dir()):
@@ -331,7 +356,7 @@ def server_status(url_key: str, token_key: str) -> dict[str, Any]:
 
 def roots_status() -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
-    for root in MEDIA_ROOTS:
+    for root in current_media_roots():
         exists = root.is_dir()
         count = 0
         if exists:
@@ -636,7 +661,7 @@ def index() -> FileResponse:
 
 @app.get("/api/items")
 def list_items() -> dict[str, Any]:
-    return {"roots": [safe_rel(p) for p in MEDIA_ROOTS], "items": media_items()}
+    return {"roots": [safe_rel(p) for p in current_media_roots()], "items": media_items()}
 
 
 @app.get("/api/status")
