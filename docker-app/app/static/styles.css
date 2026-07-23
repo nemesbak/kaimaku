@@ -122,6 +122,149 @@ p {
   border-radius: 999px;
 }
 
+.topbarActions {
+  display: flex;
+  gap: 8px;
+}
+
+/* ---------- status banner ---------- */
+
+.statusBanner {
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  line-height: 1.5;
+  border: 1px solid var(--line);
+}
+
+.statusBanner code {
+  background: rgba(0, 0, 0, 0.25);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.statusBanner.warn {
+  background: rgba(251, 191, 36, 0.12);
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.statusBanner.bad {
+  background: rgba(251, 113, 133, 0.12);
+  border-color: var(--bad);
+  color: var(--bad);
+}
+
+.statusBanner .linkBtn {
+  color: inherit;
+  text-decoration: underline;
+  font-weight: 700;
+}
+
+/* ---------- status modal ---------- */
+
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 8, 10, 0.65);
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  z-index: 50;
+}
+
+.modal {
+  width: min(520px, 100%);
+  max-height: min(80vh, 640px);
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 20px;
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+
+.modalHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modalHead h2 {
+  font-size: 16px;
+}
+
+.modalBody {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 4px;
+}
+
+.statusGroupTitle {
+  margin: 12px 0 4px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.statusGroupTitle:first-child {
+  margin-top: 0;
+}
+
+.statusRow {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 13px;
+  border-bottom: 1px solid var(--line);
+}
+
+.statusRow:last-child {
+  border-bottom: none;
+}
+
+.statusRow span:last-child {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.statusDot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--muted);
+  align-self: center;
+}
+
+.statusDot.ok {
+  background: var(--accent);
+}
+
+.statusDot.warn {
+  background: var(--warn);
+}
+
+.statusDot.bad {
+  background: var(--bad);
+}
+
+.statusDot.muted {
+  background: var(--line);
+}
+
+#statusRecheckBtn {
+  justify-self: start;
+  margin-top: 6px;
+}
+
 /* ---------- layout ---------- */
 
 .grid {

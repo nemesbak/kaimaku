@@ -8,6 +8,24 @@ Instala automáticamente los openings/temas (`theme-music/song1.mp3` y `backdrop
 [![License: MIT](https://img.shields.io/badge/licencia-MIT-green)](LICENSE)
 ![status](https://img.shields.io/badge/estado-uso%20personal-blue)
 
+## 🧭 Guía rápida (si es tu primera vez con Docker)
+
+Solo hay **una cosa** que de verdad tienes que entender antes de instalar: la diferencia entre "la ruta real en tu servidor" y "la ruta dentro del contenedor".
+
+- Tu servidor (NAS, servidor Linux, Unraid...) tiene una carpeta real donde viven tus series/películas, por ejemplo `/mnt/user/datos/media`.
+- Docker no ve esa carpeta a menos que se la "prestes" (esto se llama *montar un volumen*). El `docker-compose.yml` de este proyecto ya trae la línea que hace esto — tú solo cambias la ruta de tu lado.
+
+Si no sabes cuál es esa ruta real: entra por SSH (o la terminal de tu NAS) y navega hasta la carpeta que contiene tus subcarpetas `anime/`, `series/`, `peliculas/`... esa es. Rutas típicas según dónde corras esto:
+
+| Sistema | Ruta típica |
+| --- | --- |
+| Unraid | `/mnt/user/datos/media` |
+| Synology | `/volume1/media` |
+| TrueNAS | `/mnt/pool/media` |
+| Linux genérico | `/home/usuario/media` |
+
+Si te equivocas no pasa nada grave ni se borra nada: Kaimaku simplemente no encontrará ninguna serie, y te lo dirá con un aviso claro en la propia web (botón **⚙ Diagnóstico**, ver más abajo) para que corrijas la ruta.
+
 ## Instalar
 
 Requisito único: Docker + Docker Compose v2 (`docker compose`, no `docker-compose`). La imagen ya está publicada en [Docker Hub](https://hub.docker.com/r/nemesbak/kaimaku) para `amd64` y `arm64` (funciona también en Raspberry Pi, Synology, etc.) — no hace falta compilar nada.
@@ -31,15 +49,20 @@ services:
     ports:
       - "8098:8098"   # <-- puerto donde abrirás Kaimaku: http://IP-DEL-SERVIDOR:8098
     environment:
-      # Bibliotecas a mostrar, separadas por comas. Rutas DENTRO del contenedor
-      # (relativas al /media de "volumes" de abajo, no a tu ruta real del host).
+      # Bibliotecas a mostrar, separadas por comas. Son subcarpetas DENTRO del
+      # contenedor (relativas al /media que mapeas abajo en "volumes"), NO tu
+      # ruta real del host. Ejemplo: si tu carpeta real es
+      # /mnt/user/datos/media/anime, aquí solo pones "/media/anime" (el
+      # "/mnt/user/datos/media" ya se traduce a "/media" en el volumen de abajo).
       MEDIA_ROOTS: "/media/anime,/media/series,/media/peliculas"
       DATA_DIR: "/data"
       # Jellyfin/Emby son opcionales: sin API key, todo funciona igual pero se
-      # omite el refresco automático de biblioteca tras instalar.
+      # omite el refresco automático de biblioteca tras instalar (tendrás que
+      # esperar al escaneo periódico de Jellyfin/Emby, o refrescar tú a mano).
       # host.docker.internal apunta al propio host Docker (sirve si Jellyfin/Emby
-      # corren en el host o como contenedores normales). API key: Panel de
-      # control → API Keys → Nueva clave.
+      # corren en el mismo host o como contenedores normales, no en otra máquina
+      # de tu red — en ese caso pon su IP real). API key: Panel de control de
+      # Jellyfin/Emby → Avanzado → API Keys → Nueva clave.
       JELLYFIN_URL: "http://host.docker.internal:8096"
       JELLYFIN_API_KEY: ""
       EMBY_URL: "http://host.docker.internal:8097"
@@ -47,8 +70,16 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      # <-- CAMBIA ESTA: la ruta REAL de tu biblioteca en el host (donde están
-      # tus carpetas anime/, series/, peliculas/...). Se monta como /media.
+      # <-- CAMBIA ESTA: la ruta REAL de tu biblioteca en el host, la carpeta
+      # que POR DENTRO contiene anime/, series/, peliculas/... (o los nombres
+      # que hayas puesto arriba en MEDIA_ROOTS). Ejemplos según dónde corra esto:
+      #   Unraid:   /mnt/user/datos/media
+      #   Synology: /volume1/media
+      #   TrueNAS:  /mnt/pool/media
+      #   Linux:    /home/usuario/media
+      # ¿Dudas de cuál es? Entra por SSH/terminal y ejecuta `ls RUTA`: si ahí ves
+      # tus carpetas anime/series/peliculas, es la correcta. Si te equivocas, la
+      # propia app te avisará al abrirla (botón "⚙ Diagnóstico").
       - /mnt/user/datos/media:/media
       # Carpeta pequeña para backups y descargas en curso. No hace falta tocarla.
       - ./data:/data
@@ -73,6 +104,27 @@ docker compose up -d
 http://IP-DEL-SERVIDOR:8098
 ```
 
+Si al abrirlo no ves ninguna serie o película, no te preocupes: pulsa el botón **⚙** de la esquina superior derecha — te dirá exactamente qué carpeta no ha encontrado y qué línea del `docker-compose.yml` revisar (ver [Diagnóstico integrado](#-diagnóstico-integrado) más abajo).
+
+## Estructura de carpetas esperada
+
+Kaimaku instala los archivos con el mismo esquema que ya usan Jellyfin/Emby para temas e intros, dentro de la carpeta de cada serie o película:
+
+```text
+media/
+├── anime/                         <- una de tus MEDIA_ROOTS
+│   └── Nombre de la serie/
+│       ├── theme-music/
+│       │   └── song1.mp3          <- audio del opening/tema, lo crea Kaimaku
+│       ├── backdrops/
+│       │   └── intro.mp4          <- video del opening/tema, lo crea Kaimaku
+│       └── Temporada 1/...        <- tus episodios, Kaimaku no los toca
+├── series/
+└── peliculas/
+```
+
+No hace falta crear `theme-music/` ni `backdrops/` a mano: Kaimaku los crea solos al instalar. Si ya existía un archivo con ese nombre, se guarda una copia de seguridad antes de sobrescribirlo (ver `data/backups/` dentro de la carpeta del proyecto).
+
 ## Cómo funciona
 
 Verás tus bibliotecas (las que pusiste en `MEDIA_ROOTS`) con un filtro rápido "sin tema / con tema". Para cada serie o película tienes dos formas de instalar su opening/tema:
@@ -81,6 +133,19 @@ Verás tus bibliotecas (las que pusiste en `MEDIA_ROOTS`) con un filtro rápido 
 - **Autopiloto**: eliges una biblioteca entera (o un destino) y un umbral mínimo de confianza. Kaimaku busca, puntúa e instala cada ítem solo si supera ese umbral — si no, lo omite en vez de instalar algo dudoso.
 
 Ambos modos comparten una cola de instalación en tiempo real (puedes cancelar o reintentar cualquier trabajo), hacen backup del archivo anterior antes de sobrescribirlo, y refrescan solo la biblioteca de Jellyfin/Emby afectada (si has puesto las API keys).
+
+## 🩺 Diagnóstico integrado
+
+El botón **⚙** de la cabecera abre un panel que comprueba en vivo:
+
+- **Carpetas de biblioteca**: por cada entrada de `MEDIA_ROOTS`, si existe dentro del contenedor y cuántos destinos ha encontrado en ella. Si no existe, es casi siempre porque la ruta de la izquierda en el volumen (`- /tu/ruta/real:/media`) no es correcta.
+- **Jellyfin / Emby**: si están configurados, si se puede conectar con la URL indicada, y si tienen API key puesta. El color te dice la gravedad:
+  - 🟢 verde: todo bien, refrescará solo tras cada instalación.
+  - 🟡 amarillo: conecta pero falta la API key.
+  - 🔴 rojo: no consigue conectar (revisa la URL) o falta la carpeta.
+  - ⚪ gris: no configurado — no es un error, Jellyfin/Emby son opcionales.
+
+Además, si Kaimaku detecta al abrir la web que alguna carpeta no existe o que no ha encontrado ninguna serie/película, muestra un aviso arriba de la página automáticamente, sin que tengas que ir a buscarlo.
 
 ## Actualizar
 
@@ -99,11 +164,14 @@ Tu biblioteca de medios no se toca; solo se borra el contenedor.
 
 ## Solución de problemas
 
+**No aparece ninguna serie o película**
+Abre el diagnóstico (botón ⚙): si alguna carpeta de `MEDIA_ROOTS` aparece en rojo, la ruta del volumen en `docker-compose.yml` no apunta a donde crees. Corrígela y ejecuta `docker compose up -d` de nuevo (no hace falta `pull`, solo reinicia el contenedor con la nueva ruta).
+
 **Las descargas fallan con `HTTP Error 403: Forbidden` o mencionan "JavaScript runtime"/"EJS"**
 YouTube exige ejecutar JavaScript para resolver el cifrado de sus URLs de vídeo. La imagen ya trae lo necesario para esto — comprueba que estás en la última versión (`docker compose pull && docker compose up -d`).
 
 **No refresca Jellyfin/Emby tras instalar**
-Comprueba que `JELLYFIN_API_KEY`/`EMBY_API_KEY` están rellenas en `docker-compose.yml` y que `JELLYFIN_URL`/`EMBY_URL` son alcanzables desde el contenedor, no solo desde tu navegador.
+Abre el diagnóstico (botón ⚙): si Jellyfin/Emby aparecen en gris es que falta `JELLYFIN_URL`/`EMBY_URL` o las API keys en `docker-compose.yml`; si aparecen en rojo, la URL no es alcanzable desde el contenedor (prueba con la IP en vez del nombre, o revisa que no esté en otra red Docker distinta).
 
 **Los logs del contenedor crecen sin límite**
 El `docker-compose.yml` no fija rotación de logs a propósito, para no meter ruido en un archivo pensado para ser simple. Si te importa (uso 24/7 a largo plazo), configúralo una vez para todos tus contenedores en `/etc/docker/daemon.json` en vez de por servicio:

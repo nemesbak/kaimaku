@@ -17,8 +17,13 @@
             <p>Openings y backdrops para tu Jellyfin/Emby</p>
           </div>
         </div>
-        <button id="refreshItems" class="iconButton" title="Actualizar destinos" aria-label="Actualizar destinos">↻</button>
+        <div class="topbarActions">
+          <button id="statusBtn" class="iconButton" title="Diagnóstico: carpetas, Jellyfin, Emby" aria-label="Ver diagnóstico">⚙</button>
+          <button id="refreshItems" class="iconButton" title="Actualizar destinos" aria-label="Actualizar destinos">↻</button>
+        </div>
       </header>
+
+      <div id="statusBanner" class="statusBanner" hidden></div>
 
       <section class="grid">
         <section class="panel compose">
@@ -130,6 +135,19 @@
         </section>
       </section>
     </main>
+
+    <div id="statusModal" class="modalOverlay" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="statusModalTitle">
+        <div class="modalHead">
+          <h2 id="statusModalTitle">Diagnóstico</h2>
+          <button id="statusModalClose" class="iconButton" aria-label="Cerrar diagnóstico">✕</button>
+        </div>
+        <p class="hint">Aquí ves exactamente qué ha encontrado Kaimaku. Si algo falla, el mensaje te dice qué tocar en <code>docker-compose.yml</code>.</p>
+        <div id="statusModalBody" class="modalBody"></div>
+        <button id="statusRecheckBtn" type="button" class="ghost small">↻ Volver a comprobar</button>
+      </div>
+    </div>
+
     <script src="/static/app.js"></script>
   </body>
 </html>

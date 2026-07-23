@@ -312,6 +312,37 @@ def find_library_id(base_url: str, api_key: str, library_name: str) -> str | Non
     return None
 
 
+def check_server_reachable(base_url: str) -> bool:
+    try:
+        req = request.Request(base_url.rstrip("/") + "/System/Info/Public", method="GET")
+        with request.urlopen(req, timeout=4) as resp:
+            return resp.status < 500
+    except Exception:
+        return False
+
+
+def server_status(url_key: str, token_key: str) -> dict[str, Any]:
+    url = os.environ.get(url_key, "").strip()
+    token = os.environ.get(token_key, "").strip()
+    if not url:
+        return {"configured": False, "reachable": False, "has_key": False, "url": None}
+    return {"configured": True, "reachable": check_server_reachable(url), "has_key": bool(token), "url": url}
+
+
+def roots_status() -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for root in MEDIA_ROOTS:
+        exists = root.is_dir()
+        count = 0
+        if exists:
+            try:
+                count = sum(1 for p in root.iterdir() if p.is_dir() and not p.name.startswith("_"))
+            except OSError:
+                exists = False
+        result.append({"path": safe_rel(root), "name": root.name, "exists": exists, "items": count})
+    return result
+
+
 def refresh_servers(library_name: str) -> list[dict[str, Any]]:
     """Refresh only the Jellyfin/Emby library whose folder matches `library_name`.
 
@@ -606,6 +637,20 @@ def index() -> FileResponse:
 @app.get("/api/items")
 def list_items() -> dict[str, Any]:
     return {"roots": [safe_rel(p) for p in MEDIA_ROOTS], "items": media_items()}
+
+
+@app.get("/api/status")
+def get_status() -> dict[str, Any]:
+    """Diagnostic snapshot for the UI's status panel: are the configured media
+    folders actually visible inside the container, and are Jellyfin/Emby
+    configured and reachable. Meant to answer "why is my library empty /
+    why doesn't it refresh" without needing to open a shell.
+    """
+    return {
+        "roots": roots_status(),
+        "jellyfin": server_status("JELLYFIN_URL", "JELLYFIN_API_KEY"),
+        "emby": server_status("EMBY_URL", "EMBY_API_KEY"),
+    }
 
 
 @app.post("/api/preview")

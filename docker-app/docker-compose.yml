@@ -5,15 +5,20 @@ services:
     ports:
       - "8098:8098"   # <-- puerto donde abrirás Kaimaku: http://IP-DEL-SERVIDOR:8098
     environment:
-      # Bibliotecas a mostrar, separadas por comas. Rutas DENTRO del contenedor
-      # (relativas al /media de "volumes" de abajo, no a tu ruta real del host).
+      # Bibliotecas a mostrar, separadas por comas. Son subcarpetas DENTRO del
+      # contenedor (relativas al /media que mapeas abajo en "volumes"), NO tu
+      # ruta real del host. Ejemplo: si tu carpeta real es
+      # /mnt/user/datos/media/anime, aquí solo pones "/media/anime" (el
+      # "/mnt/user/datos/media" ya se traduce a "/media" en el volumen de abajo).
       MEDIA_ROOTS: "/media/anime,/media/series,/media/peliculas"
       DATA_DIR: "/data"
       # Jellyfin/Emby son opcionales: sin API key, todo funciona igual pero se
-      # omite el refresco automático de biblioteca tras instalar.
+      # omite el refresco automático de biblioteca tras instalar (tendrás que
+      # esperar al escaneo periódico de Jellyfin/Emby, o refrescar tú a mano).
       # host.docker.internal apunta al propio host Docker (sirve si Jellyfin/Emby
-      # corren en el host o como contenedores normales). API key: Panel de
-      # control → API Keys → Nueva clave.
+      # corren en el mismo host o como contenedores normales, no en otra máquina
+      # de tu red — en ese caso pon su IP real). API key: Panel de control de
+      # Jellyfin/Emby → Avanzado → API Keys → Nueva clave.
       JELLYFIN_URL: "http://host.docker.internal:8096"
       JELLYFIN_API_KEY: ""
       EMBY_URL: "http://host.docker.internal:8097"
@@ -21,8 +26,16 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      # <-- CAMBIA ESTA: la ruta REAL de tu biblioteca en el host (donde están
-      # tus carpetas anime/, series/, peliculas/...). Se monta como /media.
+      # <-- CAMBIA ESTA: la ruta REAL de tu biblioteca en el host, la carpeta
+      # que POR DENTRO contiene anime/, series/, peliculas/... (o los nombres
+      # que hayas puesto arriba en MEDIA_ROOTS). Ejemplos según dónde corra esto:
+      #   Unraid:   /mnt/user/datos/media
+      #   Synology: /volume1/media
+      #   TrueNAS:  /mnt/pool/media
+      #   Linux:    /home/usuario/media
+      # ¿Dudas de cuál es? Entra por SSH/terminal y ejecuta `ls RUTA`: si ahí ves
+      # tus carpetas anime/series/peliculas, es la correcta. Si te equivocas, la
+      # propia app te avisará al abrirla (botón "⚙ Diagnóstico").
       - /mnt/user/datos/media:/media
       # Carpeta pequeña para backups y descargas en curso. No hace falta tocarla.
       - ./data:/data

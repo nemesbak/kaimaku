@@ -11,6 +11,7 @@ const state = {
   expandedJobs: new Set(),
   autopilotRun: null,
   autopilotExpanded: false,
+  status: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -99,6 +100,14 @@ function renderItems() {
   list.innerHTML = "";
   updateAutoScopeLabels();
 
+  if (!items.length) {
+    const message = state.items.length
+      ? "Sin resultados con este filtro. Prueba a cambiar la búsqueda o la pestaña de biblioteca."
+      : 'No se ha encontrado ninguna serie o película. Pulsa "⚙ Diagnóstico" arriba para ver por qué.';
+    list.innerHTML = `<div class="emptyState">${message}</div>`;
+    return;
+  }
+
   for (const item of items.slice(0, 120)) {
     const row = document.createElement("button");
     row.type = "button";
@@ -140,6 +149,90 @@ async function loadItems() {
   $("autoSearchBtn").disabled = !state.selectedDestination;
   renderLibraryTabs();
   renderItems();
+}
+
+function serverStatusLine(label, info) {
+  let dot = "bad";
+  let text = "";
+  if (!info.configured) {
+    dot = "muted";
+    text = "no configurado (opcional — el refresco automático quedará desactivado)";
+  } else if (!info.reachable) {
+    dot = "bad";
+    text = `no se pudo conectar a ${info.url} — revisa la URL en docker-compose.yml y que sea accesible desde el contenedor`;
+  } else if (!info.has_key) {
+    dot = "warn";
+    text = "responde, pero falta la API key — rellénala en docker-compose.yml para poder refrescar";
+  } else {
+    dot = "ok";
+    text = `conectado correctamente (${info.url})`;
+  }
+  return `<div class="statusRow"><span class="statusDot ${dot}"></span><strong>${label}</strong><span>${text}</span></div>`;
+}
+
+function renderStatusBanner() {
+  const banner = $("statusBanner");
+  const status = state.status;
+  if (!status) {
+    banner.hidden = true;
+    return;
+  }
+  const missing = status.roots.filter((r) => !r.exists);
+  const totalItems = status.roots.reduce((sum, r) => sum + r.items, 0);
+
+  if (missing.length) {
+    banner.hidden = false;
+    banner.className = "statusBanner bad";
+    banner.innerHTML = `⚠ No se encontró la carpeta <code>${missing.map((r) => r.path).join("</code>, <code>")}</code> dentro del contenedor. Revisa la línea del volumen en <code>docker-compose.yml</code>: la parte de la izquierda (antes de <code>:/media</code>) debe ser la ruta REAL en tu servidor. <button type="button" id="bannerStatusBtn" class="linkBtn">Ver diagnóstico completo</button>`;
+  } else if (totalItems === 0) {
+    banner.hidden = false;
+    banner.className = "statusBanner warn";
+    banner.innerHTML = `Las carpetas configuradas existen pero están vacías: no se ha encontrado ninguna serie o película dentro. Comprueba que <code>MEDIA_ROOTS</code> apunta a las subcarpetas correctas. <button type="button" id="bannerStatusBtn" class="linkBtn">Ver diagnóstico completo</button>`;
+  } else {
+    banner.hidden = true;
+    return;
+  }
+  $("bannerStatusBtn").addEventListener("click", openStatusModal);
+}
+
+function renderStatusModal() {
+  const body = $("statusModalBody");
+  const status = state.status;
+  if (!status) {
+    body.innerHTML = `<p class="hint">Cargando...</p>`;
+    return;
+  }
+  const rootsHtml = status.roots
+    .map((r) => {
+      const dot = r.exists ? (r.items > 0 ? "ok" : "warn") : "bad";
+      const text = r.exists
+        ? `${r.items} destino(s) encontrados dentro de <code>${r.path}</code>`
+        : `no existe dentro del contenedor — revisa el volumen en docker-compose.yml`;
+      return `<div class="statusRow"><span class="statusDot ${dot}"></span><strong>${r.name}</strong><span>${text}</span></div>`;
+    })
+    .join("");
+  body.innerHTML = `
+    <p class="statusGroupTitle">Carpetas de biblioteca (MEDIA_ROOTS)</p>
+    ${rootsHtml || '<p class="hint">No hay ninguna carpeta configurada.</p>'}
+    <p class="statusGroupTitle">Servidores multimedia</p>
+    ${serverStatusLine("Jellyfin", status.jellyfin)}
+    ${serverStatusLine("Emby", status.emby)}
+  `;
+}
+
+async function loadStatus() {
+  state.status = await api("/api/status");
+  renderStatusBanner();
+  renderStatusModal();
+}
+
+function openStatusModal() {
+  $("statusModal").hidden = false;
+  loadStatus().catch(() => {});
+}
+
+function closeStatusModal() {
+  $("statusModal").hidden = true;
 }
 
 function renderPreview() {
@@ -548,7 +641,17 @@ $("autoThreshold").addEventListener("input", () => {
   $("autoThresholdLabel").textContent = `${$("autoThreshold").value}%`;
 });
 $("autopilotStartBtn").addEventListener("click", startAutopilot);
+$("statusBtn").addEventListener("click", openStatusModal);
+$("statusModalClose").addEventListener("click", closeStatusModal);
+$("statusRecheckBtn").addEventListener("click", () => loadStatus().catch(() => {}));
+$("statusModal").addEventListener("click", (ev) => {
+  if (ev.target.id === "statusModal") closeStatusModal();
+});
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "Escape" && !$("statusModal").hidden) closeStatusModal();
+});
 
 loadItems().catch((err) => setMessage(err.message, "error"));
 loadJobs().catch(() => {});
+loadStatus().catch(() => {});
 connectEvents();
