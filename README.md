@@ -8,6 +8,8 @@ Instala automáticamente los openings/temas (`theme-music/song1.mp3` y `backdrop
 [![License: MIT](https://img.shields.io/badge/licencia-MIT-green)](LICENSE)
 ![status](https://img.shields.io/badge/estado-uso%20personal-blue)
 
+Tres formas de instalarlo, elige la que uses para gestionar tus contenedores: [Docker Compose](#instalar) (cualquier sistema), [Portainer](#-instalar-con-portainer-stack-desde-git) (stack sincronizado desde Git) o [Unraid](#-instalar-en-unraid-plantilla) (plantilla lista para Community Applications).
+
 ## 🧭 Guía rápida (si es tu primera vez con Docker)
 
 Instalar Kaimaku es literalmente: pegar 3 comandos y cambiar **una sola línea**. No hay que crear cuentas, ni tocar bases de datos, ni instalar nada más aparte de Docker. Todo lo demás del `docker-compose.yml` ya viene relleno con valores que funcionan tal cual.
@@ -110,6 +112,33 @@ http://IP-DEL-SERVIDOR:8098
 Ya está: verás tus series y películas listadas solas, sin nada más que configurar.
 
 Si al abrirlo no ves ninguna serie o película, no te preocupes: pulsa el botón **⚙** de la esquina superior derecha — te dirá exactamente qué carpeta no ha encontrado y qué línea del `docker-compose.yml` revisar (ver [Diagnóstico integrado](#-diagnóstico-integrado) más abajo).
+
+## 🐳 Instalar con Portainer (stack desde Git)
+
+Si gestionas tus contenedores con Portainer, no hace falta pegar el `docker-compose.yml` a mano: Portainer puede desplegar el stack directamente desde este repositorio de GitHub y volver a sincronizarlo cada vez que cambie.
+
+1. **Stacks → Add stack.**
+2. Ponle un nombre (ej. `kaimaku`) y en **Build method** elige **Repository**.
+3. **Repository URL:** `https://github.com/nemesbak/kaimaku.git` · **Reference:** `refs/heads/main`.
+4. **Compose path:** `docker-app/docker-compose.yml`.
+5. (Opcional) Activa **GitOps updates** con un intervalo (ej. cada 5 minutos) para que Portainer vuelva a desplegar solo si el `docker-compose.yml` del repo cambia en el futuro.
+6. Pulsa **Deploy the stack**.
+
+Antes de desplegar, edita en el propio formulario de Portainer la línea del volumen `- /mnt/user/datos/media:/media` para poner tu ruta real (es el mismo único cambio necesario que en la instalación por Compose de más arriba).
+
+## 🖥️ Instalar en Unraid (plantilla)
+
+Kaimaku trae una plantilla lista para el **Add Container** de Unraid — rellena puertos, rutas y variables solo, sin depender del catálogo público de Community Applications.
+
+1. Ve a la pestaña **Docker** de Unraid y pulsa **Add Container**.
+2. En el campo **Template** (parte inferior del formulario) pega esta URL:
+   ```text
+   https://raw.githubusercontent.com/nemesbak/kaimaku/main/unraid-template/kaimaku.xml
+   ```
+3. El formulario se rellena solo (puerto `8098`, carpetas `/media` y `/data`, variables de Jellyfin/Emby). Cambia únicamente el campo **Media** por la ruta real de tu biblioteca (ej. `/mnt/user/datos/media`).
+4. Pulsa **Apply**.
+
+> Nota: esto instala Kaimaku directamente desde su propia plantilla, sin necesidad de que aparezca en el buscador de Community Applications (eso requeriría enviarla y que la aprobasen en el repositorio de plantillas de la comunidad de Unraid — un trámite aparte y externo a este proyecto).
 
 ## Estructura de carpetas esperada
 

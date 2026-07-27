@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <rect width="256" height="256" rx="48" fill="#101215"/>
+  <rect x="10" y="10" width="236" height="236" rx="40" fill="none" stroke="#36d399" stroke-width="6"/>
+  <text x="128" y="172" font-size="140" text-anchor="middle" font-family="'Segoe UI', 'Noto Sans JP', sans-serif" fill="#36d399">開幕</text>
+</svg>

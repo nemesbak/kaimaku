@@ -3,7 +3,7 @@ const state = {
   selectedDestination: "",
   libraryFilter: "",
   statusFilter: "all",
-  mode: "manual",
+  mode: "auto",
   preview: null,
   jobs: [],
   searchResults: [],
@@ -114,7 +114,7 @@ function renderItems() {
     row.className = `dest ${state.selectedDestination === item.path ? "selected" : ""}`;
     row.title = item.path;
     row.innerHTML = `
-      <span class="destKind">${item.kind === "movie" ? "MOV" : "SER"}</span>
+      <span class="destKind">${item.kind === "movie" ? "🎬" : "📺"}</span>
       <span class="destName">
         <strong>${item.name}</strong>
         <span>${item.library}</span>
