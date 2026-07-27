@@ -106,7 +106,7 @@ function renderItems() {
     row.className = "dest";
     row.title = item.path;
     row.innerHTML = `
-      <span class="destKind">${item.kind === "movie" ? "🎬" : "📺"}</span>
+      <span class="destKind">${item.kind === "movie" ? "映" : "系"}</span>
       <span class="destName">
         <strong>${item.name}</strong>
         <span>${item.library}</span>
@@ -124,7 +124,7 @@ function renderItems() {
 function renderActHeader() {
   const item = findSelectedItem();
   if (!item) return;
-  $("actDestKind").textContent = item.kind === "movie" ? "🎬" : "📺";
+  $("actDestKind").textContent = item.kind === "movie" ? "映" : "系";
   $("actDestName").textContent = item.name;
   $("actDestLib").textContent = item.library;
   $("actDestBadges").innerHTML = `
@@ -483,7 +483,7 @@ function renderAutopilotStatus() {
   box.innerHTML = `
     <div class="jobHead">
       <div class="jobTitle">
-        <strong>🤖 ${run.scope}</strong>
+        <strong>${run.scope}</strong>
         <span>${run.processed}/${run.total} · ${run.queued.length} encolados · ${run.skipped.length} omitidos</span>
       </div>
       <span class="status ${run.status}">${AUTOPILOT_STATUS_LABELS[run.status] || run.status}</span>
@@ -555,7 +555,7 @@ async function startAutopilot() {
     const data = await api("/api/autopilot", { method: "POST", body: JSON.stringify(body) });
     state.autopilotRun = data.run;
     renderAutopilotStatus();
-    setMessage(`Autopiloto en marcha sobre ${data.run.total} destino(s). Puedes seguirlo en "📋 Cola".`, "success", "autoMsg");
+    setMessage(`Autopiloto en marcha sobre ${data.run.total} destino(s). Puedes seguirlo en "Cola".`, "success", "autoMsg");
     switchView("queue");
   } catch (err) {
     setMessage(`No se pudo iniciar: ${err.message}`, "error", "autoMsg");
@@ -578,7 +578,7 @@ function renderJobs() {
   const box = $("jobs");
   box.innerHTML = "";
   if (!state.jobs.length) {
-    box.innerHTML = `<div class="emptyState">Todavía no hay trabajos en cola. Ve a "🎬 Instalar" para buscar un opening.</div>`;
+    box.innerHTML = `<div class="emptyState">Todavía no hay trabajos en cola. Ve a "Instalar" para buscar un opening.</div>`;
     return;
   }
   for (const job of state.jobs) {
