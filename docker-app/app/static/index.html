@@ -25,130 +25,121 @@
 
       <div id="statusBanner" class="statusBanner" hidden></div>
 
-      <section class="panel modeChoice">
-        <button id="modeAutoBtn" type="button" class="modeCard selected">
-          <span class="modeCardIcon">🤖</span>
-          <span class="modeCardBody">
-            <strong>Automático</strong>
-            <span>Elige una serie/película (o toda una biblioteca) y Kaimaku busca, elige y lo instala solo.</span>
-          </span>
-          <span class="modeCardTag">Recomendado</span>
+      <nav class="viewTabs">
+        <button id="viewInstallBtn" type="button" class="viewTab selected">🎬 Instalar</button>
+        <button id="viewQueueBtn" type="button" class="viewTab">
+          📋 Cola
+          <span id="queueBadge" class="badgeCount" hidden>0</span>
         </button>
-        <button id="modeManualBtn" type="button" class="modeCard">
-          <span class="modeCardIcon">🎯</span>
-          <span class="modeCardBody">
-            <strong>Manual</strong>
-            <span>Buscas tú el vídeo (o pegas un enlace) y decides exactamente cuál se instala.</span>
-          </span>
-        </button>
+      </nav>
+
+      <section id="viewInstall" class="panel view">
+        <!-- Paso 1: elegir destino -->
+        <div id="pickStep">
+          <h2 class="viewTitle">¿Qué serie o película quieres arreglar? <span id="itemCount" class="stepCount"></span></h2>
+
+          <input id="destinationFilter" class="destFilter" type="search" placeholder="Buscar serie o película..." />
+          <div id="libraryTabs" class="libraryTabs"></div>
+          <label class="onlyMissing">
+            <input id="onlyMissing" type="checkbox" />
+            Mostrar solo lo que le falta audio o vídeo
+          </label>
+
+          <div id="destinations" class="destinations"></div>
+        </div>
+
+        <!-- Paso 2: qué hacer con el destino elegido -->
+        <div id="actStep" hidden>
+          <button id="backToListBtn" type="button" class="linkBtn backLink">‹ Elegir otra serie/película</button>
+
+          <div class="destHeader">
+            <span id="actDestKind" class="destKind"></span>
+            <span class="destHeaderBody">
+              <strong id="actDestName"></strong>
+              <span id="actDestLib"></span>
+            </span>
+            <span id="actDestBadges" class="badges"></span>
+          </div>
+
+          <div class="modeSwitch">
+            <button id="modeAutoBtn" type="button" class="modeTab selected">🤖 Automático</button>
+            <button id="modeManualBtn" type="button" class="modeTab">🎯 Manual</button>
+          </div>
+
+          <div id="autoBody">
+            <p class="hint">Kaimaku busca el opening/tema, elige el mejor y lo instala solo.</p>
+
+            <label class="chip wide">
+              <input id="autoScopeLibraryChk" type="checkbox" />
+              Instalarlo en toda la biblioteca <strong id="autoScopeLibraryName">—</strong> en vez de solo esto
+            </label>
+
+            <details class="advanced">
+              <summary>Opciones avanzadas</summary>
+              <div class="chips">
+                <label class="chip"><input id="autoAssetAudio" type="checkbox" checked /> Audio</label>
+                <label class="chip"><input id="autoAssetVideo" type="checkbox" checked /> Video</label>
+                <label class="chip"><input id="autoOverwrite" type="checkbox" /> Sobrescribir existentes</label>
+                <label class="chip"><input id="autoRefresh" type="checkbox" checked /> Refrescar bibliotecas</label>
+              </div>
+              <label class="field">
+                <span>Confianza mínima para instalar sin revisar: <b id="autoThresholdLabel">75%</b></span>
+                <input id="autoThreshold" type="range" min="40" max="95" step="5" value="75" />
+              </label>
+              <p class="hint">Por debajo del umbral, se omite en vez de instalar algo dudoso.</p>
+            </details>
+
+            <button id="autopilotStartBtn" type="button" class="primary">🤖 Buscar e instalar</button>
+            <p id="autoMsg" class="message"></p>
+          </div>
+
+          <div id="manualBody" hidden>
+            <button id="autoSearchBtn" type="button" class="primary autoSearch">Buscar automáticamente</button>
+            <p class="hint">Prioriza openings oficiales en español/castellano.</p>
+
+            <div id="searchResults" class="searchResults"></div>
+
+            <div id="preview" class="preview empty">
+              <div class="emptyState">Pulsa "Buscar automáticamente" para ver el opening propuesto aquí.</div>
+            </div>
+
+            <details class="advanced">
+              <summary>Buscar manualmente / pegar un enlace</summary>
+              <label class="field">
+                <span>Buscar en YouTube</span>
+                <div class="inline">
+                  <input id="searchQuery" type="text" placeholder="Ej: Dragon Ball Z opening 1" />
+                  <button id="searchBtn" type="button">Buscar</button>
+                </div>
+              </label>
+              <label class="field">
+                <span>...o pega un enlace directo</span>
+                <div class="inline">
+                  <input id="youtubeUrl" type="url" placeholder="https://www.youtube.com/watch?v=..." />
+                  <button id="previewBtn" type="button">Previsualizar</button>
+                </div>
+              </label>
+            </details>
+
+            <div class="chips">
+              <label class="chip"><input id="assetAudio" type="checkbox" checked /> Audio</label>
+              <label class="chip"><input id="assetVideo" type="checkbox" checked /> Video</label>
+              <label class="chip"><input id="refreshLibs" type="checkbox" checked /> Refrescar bibliotecas</label>
+            </div>
+
+            <button id="enqueueBtn" type="button" class="primary">Añadir a cola</button>
+            <p id="formMsg" class="message"></p>
+          </div>
+        </div>
       </section>
 
-      <section class="grid">
-        <section class="panel compose">
-          <ol class="steps">
-            <li class="stepItem hasConnector" data-step="1">
-              <span class="stepLabel">Destino <span id="itemCount" class="stepCount"></span></span>
-
-              <div id="libraryTabs" class="libraryTabs"></div>
-              <input id="destinationFilter" class="destFilter" type="search" placeholder="Buscar serie o película..." />
-              <div class="statusTabs">
-                <button type="button" class="statusTab selected" data-status="all">Todos</button>
-                <button type="button" class="statusTab" data-status="missing">Sin tema</button>
-                <button type="button" class="statusTab" data-status="has">Con tema</button>
-              </div>
-              <div id="destinations" class="destinations"></div>
-            </li>
-
-            <li id="autoStep2" class="stepItem" data-step="2">
-              <span class="stepLabel">Automático</span>
-
-              <div class="scopeChoice">
-                <label>
-                  <input type="radio" name="autoScope" value="single" checked />
-                  Solo lo seleccionado: <strong id="autoScopeSingle">—</strong>
-                </label>
-                <label>
-                  <input type="radio" name="autoScope" value="library" />
-                  Biblioteca completa: <strong id="autoScopeLibrary">elige una pestaña de biblioteca arriba</strong>
-                </label>
-              </div>
-
-              <details class="advanced">
-                <summary>Opciones avanzadas</summary>
-                <div class="chips">
-                  <label class="chip"><input id="autoAssetAudio" type="checkbox" checked /> Audio</label>
-                  <label class="chip"><input id="autoAssetVideo" type="checkbox" checked /> Video</label>
-                  <label class="chip"><input id="autoOverwrite" type="checkbox" /> Sobrescribir existentes</label>
-                  <label class="chip"><input id="autoRefresh" type="checkbox" checked /> Refrescar bibliotecas</label>
-                </div>
-
-                <label class="field">
-                  <span>Confianza mínima para instalar sin revisar: <b id="autoThresholdLabel">75%</b></span>
-                  <input id="autoThreshold" type="range" min="40" max="95" step="5" value="75" />
-                </label>
-                <p class="hint">Por debajo del umbral, ese destino se omite en vez de instalar algo dudoso.</p>
-              </details>
-
-              <button id="autopilotStartBtn" type="button" class="primary">🤖 Buscar e instalar</button>
-              <p id="autoMsg" class="message"></p>
-            </li>
-
-            <li id="manualStep2" class="stepItem hasConnector" data-step="2" hidden>
-              <span class="stepLabel">Opening</span>
-
-              <button id="autoSearchBtn" type="button" class="primary autoSearch" disabled>
-                Buscar automáticamente
-              </button>
-              <p class="hint">Prioriza openings oficiales en español/castellano.</p>
-
-              <div id="searchResults" class="searchResults"></div>
-
-              <div id="preview" class="preview empty">
-                <div class="emptyState">Elige un destino y pulsa "Buscar automáticamente" para ver el opening propuesto aquí.</div>
-              </div>
-
-              <details class="advanced">
-                <summary>Buscar manualmente / pegar un enlace</summary>
-                <label class="field">
-                  <span>Buscar en YouTube</span>
-                  <div class="inline">
-                    <input id="searchQuery" type="text" placeholder="Ej: Dragon Ball Z opening 1" />
-                    <button id="searchBtn" type="button">Buscar</button>
-                  </div>
-                </label>
-                <label class="field">
-                  <span>...o pega un enlace directo</span>
-                  <div class="inline">
-                    <input id="youtubeUrl" type="url" placeholder="https://www.youtube.com/watch?v=..." />
-                    <button id="previewBtn" type="button">Previsualizar</button>
-                  </div>
-                </label>
-              </details>
-            </li>
-
-            <li id="manualStep3" class="stepItem" data-step="3" hidden>
-              <span class="stepLabel">Instalar</span>
-
-              <div class="chips">
-                <label class="chip"><input id="assetAudio" type="checkbox" checked /> Audio</label>
-                <label class="chip"><input id="assetVideo" type="checkbox" checked /> Video</label>
-                <label class="chip"><input id="refreshLibs" type="checkbox" checked /> Refrescar bibliotecas</label>
-              </div>
-
-              <button id="enqueueBtn" class="primary">Añadir a cola</button>
-              <p id="formMsg" class="message"></p>
-            </li>
-          </ol>
-        </section>
-
-        <section class="panel queuePanel">
-          <div class="panelHeader">
-            <h2>Cola</h2>
-            <span id="queueCount" class="pill">0 jobs</span>
-          </div>
-          <div id="autopilotStatus" class="autopilotStatus" hidden></div>
-          <div id="jobs" class="jobs"></div>
-        </section>
+      <section id="viewQueue" class="panel view" hidden>
+        <div class="panelHeader">
+          <h2>Cola</h2>
+          <span id="queueCount" class="pill">0 jobs</span>
+        </div>
+        <div id="autopilotStatus" class="autopilotStatus" hidden></div>
+        <div id="jobs" class="jobs"></div>
       </section>
     </main>
 

@@ -75,9 +75,9 @@ p {
 }
 
 .shell {
-  width: min(1200px, calc(100vw - 32px));
+  width: min(720px, calc(100vw - 32px));
   margin: 0 auto;
-  padding: 32px 0;
+  padding: 32px 0 60px;
 }
 
 /* ---------- header ---------- */
@@ -87,7 +87,7 @@ p {
   justify-content: space-between;
   align-items: center;
   gap: 24px;
-  margin-bottom: 28px;
+  margin-bottom: 20px;
 }
 
 .brand {
@@ -269,14 +269,50 @@ p {
   margin-top: 6px;
 }
 
-/* ---------- layout ---------- */
+/* ---------- view tabs (Instalar / Cola) ---------- */
 
-.grid {
-  display: grid;
-  grid-template-columns: minmax(380px, 0.9fr) minmax(420px, 1.1fr);
-  gap: 16px;
-  align-items: start;
+.viewTabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
 }
+
+.viewTab {
+  flex: 1;
+  min-height: 44px;
+  border-radius: var(--radius);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.viewTab.selected {
+  background: var(--accent);
+  color: #04140e;
+  border-color: transparent;
+}
+
+.badgeCount {
+  background: var(--bad);
+  color: #2a0007;
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 1px 7px;
+  min-width: 18px;
+  text-align: center;
+}
+
+.viewTab.selected .badgeCount {
+  background: #04140e;
+  color: var(--accent);
+}
+
+/* ---------- panel / view ---------- */
 
 .panel {
   background: var(--panel);
@@ -308,145 +344,16 @@ p {
   white-space: nowrap;
 }
 
-/* ---------- mode choice ---------- */
-
-.modeChoice {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  margin-bottom: 16px;
-  padding: 12px;
-}
-
-.modeCard {
-  position: relative;
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  text-align: left;
-  min-height: 84px;
-  padding: 16px;
-  background: var(--sunken);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-}
-
-.modeCard:hover {
-  border-color: var(--accent-2);
-}
-
-.modeCard.selected {
-  border-color: var(--accent);
-  background: #10241c;
-  box-shadow: inset 0 0 0 1px var(--accent);
-}
-
-.modeCardIcon {
-  font-size: 26px;
-  line-height: 1;
-}
-
-.modeCardBody {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.modeCardBody strong {
+.viewTitle {
   font-size: 15px;
-  color: var(--text);
-}
-
-.modeCard.selected .modeCardBody strong::after {
-  content: " ✓";
-  color: var(--accent);
-}
-
-.modeCardBody span {
-  font-size: 12px;
-  color: var(--muted);
-  line-height: 1.4;
-  font-weight: 400;
-  white-space: normal;
-}
-
-.modeCardTag {
-  position: absolute;
-  top: -9px;
-  right: 14px;
-  background: var(--accent);
-  color: #04140e;
-  font-size: 10px;
   font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  padding: 3px 9px;
-  border-radius: 999px;
-}
-
-@media (max-width: 980px) {
-  .modeChoice {
-    grid-template-columns: 1fr;
-  }
-}
-
-/* ---------- stepper ---------- */
-
-.steps {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 26px;
-}
-
-.stepItem {
-  position: relative;
-  padding-left: 28px;
-}
-
-.stepItem::before {
-  content: attr(data-step);
-  position: absolute;
-  left: 0;
-  top: 1px;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 700;
-  display: grid;
-  place-items: center;
-}
-
-.stepItem.hasConnector::after {
-  content: "";
-  position: absolute;
-  left: 9px;
-  top: 24px;
-  bottom: -26px;
-  width: 1px;
-  background: var(--line);
-}
-
-.stepLabel {
+  margin-bottom: 14px;
   display: flex;
   align-items: baseline;
-  gap: 8px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--text);
-  margin-bottom: 12px;
+  gap: 6px;
 }
 
 .stepCount {
-  text-transform: none;
-  letter-spacing: normal;
   font-weight: 400;
   color: var(--muted);
   font-size: 12px;
@@ -481,7 +388,7 @@ p {
 /* ---------- advanced disclosure ---------- */
 
 .advanced {
-  margin-top: 14px;
+  margin: 14px 0;
 }
 
 .advanced summary {
@@ -552,7 +459,7 @@ p {
   font-size: 12px;
 }
 
-/* ---------- library tabs ---------- */
+/* ---------- library tabs / filters ---------- */
 
 .libraryTabs {
   display: flex;
@@ -575,53 +482,95 @@ p {
   color: var(--accent);
 }
 
-.statusTabs {
+.onlyMissing {
   display: flex;
-  gap: 6px;
-  margin-bottom: 10px;
-}
-
-.statusTab {
-  min-height: 26px;
-  padding: 0 10px;
-  font-size: 11px;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--muted);
-}
-
-.statusTab.selected {
-  background: var(--panel-2);
-  color: var(--text);
-  border-color: var(--accent-2);
-}
-
-/* ---------- autopilot scope / options ---------- */
-
-.scopeChoice {
-  display: grid;
-  gap: 10px;
-  margin-bottom: 14px;
-  font-size: 13px;
-}
-
-.scopeChoice label {
-  display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 12px;
+  cursor: pointer;
 }
 
-.scopeChoice input {
+.onlyMissing input {
   width: auto;
   min-height: auto;
   accent-color: var(--accent);
 }
 
-.scopeChoice strong {
-  color: var(--text);
-  font-weight: 600;
+/* ---------- back link ---------- */
+
+.backLink {
+  padding: 0;
+  margin-bottom: 14px;
+  display: inline-block;
 }
+
+/* ---------- destination header (paso 2) ---------- */
+
+.destHeader {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--sunken);
+  margin-bottom: 16px;
+}
+
+.destHeader .destKind {
+  font-size: 22px;
+}
+
+.destHeaderBody {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.destHeaderBody strong {
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.destHeaderBody span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* ---------- mode switch (dentro del paso 2) ---------- */
+
+.modeSwitch {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 18px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px;
+  width: fit-content;
+}
+
+.modeTab {
+  border: none;
+  background: transparent;
+  min-height: 34px;
+  padding: 0 18px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.modeTab.selected {
+  background: var(--accent);
+  color: #04140e;
+}
+
+/* ---------- scope / autopilot options ---------- */
 
 input[type="range"] {
   width: 100%;
@@ -683,12 +632,12 @@ input[type="range"] {
   color: var(--bad);
 }
 
-/* ---------- destinations ---------- */
+/* ---------- destinations list ---------- */
 
 .destinations {
   display: grid;
   gap: 6px;
-  max-height: 260px;
+  max-height: 420px;
   overflow: auto;
   padding-right: 4px;
 }
@@ -698,28 +647,21 @@ input[type="range"] {
   grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: 10px;
-  padding: 9px 10px;
+  padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--sunken);
+  width: 100%;
+  text-align: left;
 }
 
-.dest.selected {
-  border-color: var(--accent);
-  background: #10241c;
-  box-shadow: inset 0 0 0 1px var(--accent);
-}
-
-.dest.selected .destName strong::after {
-  content: " ✓";
-  color: var(--accent);
-  font-weight: 700;
+.dest:hover {
+  border-color: var(--accent-2);
 }
 
 .destKind {
-  font-size: 10px;
+  font-size: 16px;
   color: var(--muted);
-  letter-spacing: 0.04em;
 }
 
 .destName {
@@ -778,6 +720,12 @@ input[type="range"] {
   font-size: 12px;
   color: var(--muted);
   cursor: pointer;
+}
+
+.chip.wide {
+  width: 100%;
+  border-radius: 8px;
+  margin-bottom: 14px;
 }
 
 .chip:has(input:checked) {
@@ -1008,17 +956,17 @@ input[type="range"] {
   font-size: 13px;
 }
 
-@media (max-width: 980px) {
-  .grid {
-    grid-template-columns: 1fr;
-  }
-
+@media (max-width: 560px) {
   .shell {
-    width: min(100vw - 20px, 760px);
-    padding: 16px 0;
+    padding: 16px 0 40px;
   }
 
   .inline {
     grid-template-columns: 1fr;
+  }
+
+  .viewTab {
+    font-size: 13px;
+    padding: 0 8px;
   }
 }

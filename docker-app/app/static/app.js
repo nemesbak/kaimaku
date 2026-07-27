@@ -1,8 +1,10 @@
 const state = {
   items: [],
+  view: "install", // "install" | "queue"
+  step: 1, // 1 = elegir destino, 2 = actuar sobre el destino elegido
   selectedDestination: "",
   libraryFilter: "",
-  statusFilter: "all",
+  onlyMissing: false,
   mode: "auto",
   preview: null,
   jobs: [],
@@ -39,6 +41,10 @@ async function api(path, options = {}) {
   return data;
 }
 
+function findSelectedItem() {
+  return state.items.find((i) => i.path === state.selectedDestination) || null;
+}
+
 function renderLibraryTabs() {
   const box = $("libraryTabs");
   const libraries = [...new Set(state.items.map((item) => item.library))].sort();
@@ -70,21 +76,8 @@ function renderLibraryTabs() {
   }
 }
 
-function matchesStatus(item) {
-  if (state.statusFilter === "missing") return !item.has_audio || !item.has_video;
-  if (state.statusFilter === "has") return item.has_audio && item.has_video;
-  return true;
-}
-
-function updateAutoScopeLabels() {
-  if (state.libraryFilter) {
-    const count = state.items.filter((i) => i.library === state.libraryFilter).length;
-    $("autoScopeLibrary").textContent = `${state.libraryFilter} (${count} ítems)`;
-  } else {
-    $("autoScopeLibrary").textContent = "elige una pestaña de biblioteca arriba";
-  }
-  const selected = state.items.find((i) => i.path === state.selectedDestination);
-  $("autoScopeSingle").textContent = selected ? selected.name : "—";
+function matchesMissing(item) {
+  return !state.onlyMissing || !item.has_audio || !item.has_video;
 }
 
 function renderItems() {
@@ -93,12 +86,11 @@ function renderItems() {
   const items = state.items.filter(
     (item) =>
       (!state.libraryFilter || item.library === state.libraryFilter) &&
-      matchesStatus(item) &&
+      matchesMissing(item) &&
       (item.name.toLowerCase().includes(filter) || item.path.toLowerCase().includes(filter))
   );
-  $("itemCount").textContent = `${items.length}/${state.items.length}`;
+  $("itemCount").textContent = `(${items.length}/${state.items.length})`;
   list.innerHTML = "";
-  updateAutoScopeLabels();
 
   if (!items.length) {
     const message = state.items.length
@@ -111,7 +103,7 @@ function renderItems() {
   for (const item of items.slice(0, 120)) {
     const row = document.createElement("button");
     row.type = "button";
-    row.className = `dest ${state.selectedDestination === item.path ? "selected" : ""}`;
+    row.className = "dest";
     row.title = item.path;
     row.innerHTML = `
       <span class="destKind">${item.kind === "movie" ? "🎬" : "📺"}</span>
@@ -124,31 +116,70 @@ function renderItems() {
         <span class="badge ${item.has_video ? "ok" : ""}">video</span>
       </span>
     `;
-    row.addEventListener("click", () => {
-      state.selectedDestination = item.path;
-      $("autoSearchBtn").disabled = false;
-      renderItems();
-    });
+    row.addEventListener("click", () => selectDestination(item));
     list.appendChild(row);
   }
+}
+
+function renderActHeader() {
+  const item = findSelectedItem();
+  if (!item) return;
+  $("actDestKind").textContent = item.kind === "movie" ? "🎬" : "📺";
+  $("actDestName").textContent = item.name;
+  $("actDestLib").textContent = item.library;
+  $("actDestBadges").innerHTML = `
+    <span class="badge ${item.has_audio ? "ok" : ""}">audio</span>
+    <span class="badge ${item.has_video ? "ok" : ""}">video</span>
+  `;
+  $("autoScopeLibraryName").textContent = item.library;
+  $("autoScopeLibraryChk").checked = false;
+}
+
+function renderStep() {
+  $("pickStep").hidden = state.step !== 1;
+  $("actStep").hidden = state.step !== 2;
+}
+
+function selectDestination(item) {
+  state.selectedDestination = item.path;
+  state.step = 2;
+  state.preview = null;
+  state.searchResults = [];
+  state.selectedResultId = "";
+  setMode("auto");
+  renderActHeader();
+  renderPreview();
+  renderSearchResults();
+  renderStep();
+}
+
+function backToList() {
+  state.step = 1;
+  renderStep();
+}
+
+function switchView(view) {
+  state.view = view;
+  $("viewInstall").hidden = view !== "install";
+  $("viewQueue").hidden = view !== "queue";
+  $("viewInstallBtn").classList.toggle("selected", view === "install");
+  $("viewQueueBtn").classList.toggle("selected", view === "queue");
 }
 
 function setMode(mode) {
   state.mode = mode;
   $("modeManualBtn").classList.toggle("selected", mode === "manual");
   $("modeAutoBtn").classList.toggle("selected", mode === "auto");
-  $("manualStep2").hidden = mode !== "manual";
-  $("manualStep3").hidden = mode !== "manual";
-  $("autoStep2").hidden = mode !== "auto";
+  $("autoBody").hidden = mode !== "auto";
+  $("manualBody").hidden = mode !== "manual";
 }
 
 async function loadItems() {
   const data = await api("/api/items");
   state.items = data.items;
-  if (!state.selectedDestination && state.items[0]) state.selectedDestination = state.items[0].path;
-  $("autoSearchBtn").disabled = !state.selectedDestination;
   renderLibraryTabs();
   renderItems();
+  if (state.step === 2 && findSelectedItem()) renderActHeader();
 }
 
 function serverStatusLine(label, info) {
@@ -239,7 +270,7 @@ function renderPreview() {
   const box = $("preview");
   if (!state.preview) {
     box.className = "preview empty";
-    box.innerHTML = `<div class="emptyState">Pega un enlace y previsualiza antes de instalar.</div>`;
+    box.innerHTML = `<div class="emptyState">Pulsa "Buscar automáticamente" para ver el opening propuesto aquí.</div>`;
     return;
   }
   box.className = "preview";
@@ -336,10 +367,7 @@ async function searchYoutube() {
 }
 
 async function autoSearch() {
-  if (!state.selectedDestination) {
-    setMessage("Elige primero una serie o película.", "error");
-    return;
-  }
+  if (!state.selectedDestination) return;
   $("autoSearchBtn").disabled = true;
   setMessage("Buscando automáticamente (opening, español/castellano, oficial)...");
   try {
@@ -392,6 +420,7 @@ async function enqueue() {
     });
     setMessage("Añadido a la cola.", "success");
     await loadJobs();
+    switchView("queue");
   } catch (err) {
     setMessage(`No se pudo encolar: ${err.message}`, "error");
   }
@@ -422,9 +451,19 @@ const AUTOPILOT_STATUS_LABELS = {
   cancelled: "cancelado",
 };
 
+function updateQueueBadge() {
+  const activeJobs = state.jobs.filter((j) => j.status === "queued" || j.status === "running").length;
+  const activeAutopilot = state.autopilotRun && state.autopilotRun.status === "running" ? 1 : 0;
+  const total = activeJobs + activeAutopilot;
+  const badge = $("queueBadge");
+  badge.hidden = total === 0;
+  badge.textContent = String(total);
+}
+
 function renderAutopilotStatus() {
   const box = $("autopilotStatus");
   const run = state.autopilotRun;
+  updateQueueBadge();
   if (!run) {
     box.hidden = true;
     return;
@@ -485,7 +524,11 @@ async function cancelAutopilot() {
 }
 
 async function startAutopilot() {
-  const scope = document.querySelector('input[name="autoScope"]:checked').value;
+  const item = findSelectedItem();
+  if (!item) {
+    setMessage("Elige primero una serie o película.", "error", "autoMsg");
+    return;
+  }
   const assets = [];
   if ($("autoAssetAudio").checked) assets.push("audio");
   if ($("autoAssetVideo").checked) assets.push("video");
@@ -500,18 +543,10 @@ async function startAutopilot() {
     overwrite: $("autoOverwrite").checked,
     refresh: $("autoRefresh").checked,
   };
-  if (scope === "library") {
-    if (!state.libraryFilter) {
-      setMessage("Elige una pestaña de biblioteca arriba primero.", "error", "autoMsg");
-      return;
-    }
-    body.library = state.libraryFilter;
+  if ($("autoScopeLibraryChk").checked) {
+    body.library = item.library;
   } else {
-    if (!state.selectedDestination) {
-      setMessage("Elige una serie o película en el paso 1.", "error", "autoMsg");
-      return;
-    }
-    body.destination = state.selectedDestination;
+    body.destination = item.path;
   }
 
   $("autopilotStartBtn").disabled = true;
@@ -520,7 +555,8 @@ async function startAutopilot() {
     const data = await api("/api/autopilot", { method: "POST", body: JSON.stringify(body) });
     state.autopilotRun = data.run;
     renderAutopilotStatus();
-    setMessage(`Autopiloto en marcha sobre ${data.run.total} destino(s).`, "success", "autoMsg");
+    setMessage(`Autopiloto en marcha sobre ${data.run.total} destino(s). Puedes seguirlo en "📋 Cola".`, "success", "autoMsg");
+    switchView("queue");
   } catch (err) {
     setMessage(`No se pudo iniciar: ${err.message}`, "error", "autoMsg");
   } finally {
@@ -538,10 +574,11 @@ const STATUS_LABELS = {
 
 function renderJobs() {
   $("queueCount").textContent = `${state.jobs.length} jobs`;
+  updateQueueBadge();
   const box = $("jobs");
   box.innerHTML = "";
   if (!state.jobs.length) {
-    box.innerHTML = `<div class="emptyState">Todavía no hay trabajos en cola. Busca un opening arriba para empezar.</div>`;
+    box.innerHTML = `<div class="emptyState">Todavía no hay trabajos en cola. Ve a "🎬 Instalar" para buscar un opening.</div>`;
     return;
   }
   for (const job of state.jobs) {
@@ -617,6 +654,13 @@ function connectEvents() {
 
 $("refreshItems").addEventListener("click", loadItems);
 $("destinationFilter").addEventListener("input", renderItems);
+$("onlyMissing").addEventListener("change", () => {
+  state.onlyMissing = $("onlyMissing").checked;
+  renderItems();
+});
+$("backToListBtn").addEventListener("click", backToList);
+$("viewInstallBtn").addEventListener("click", () => switchView("install"));
+$("viewQueueBtn").addEventListener("click", () => switchView("queue"));
 $("previewBtn").addEventListener("click", previewUrl);
 $("enqueueBtn").addEventListener("click", enqueue);
 $("searchBtn").addEventListener("click", searchYoutube);
@@ -630,13 +674,6 @@ $("searchQuery").addEventListener("keydown", (ev) => {
 $("jobs").addEventListener("click", onJobsClick);
 $("modeManualBtn").addEventListener("click", () => setMode("manual"));
 $("modeAutoBtn").addEventListener("click", () => setMode("auto"));
-document.querySelectorAll(".statusTab").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    state.statusFilter = btn.dataset.status;
-    document.querySelectorAll(".statusTab").forEach((b) => b.classList.toggle("selected", b === btn));
-    renderItems();
-  });
-});
 $("autoThreshold").addEventListener("input", () => {
   $("autoThresholdLabel").textContent = `${$("autoThreshold").value}%`;
 });
@@ -651,6 +688,7 @@ document.addEventListener("keydown", (ev) => {
   if (ev.key === "Escape" && !$("statusModal").hidden) closeStatusModal();
 });
 
+renderStep();
 loadItems().catch((err) => setMessage(err.message, "error"));
 loadJobs().catch(() => {});
 loadStatus().catch(() => {});
