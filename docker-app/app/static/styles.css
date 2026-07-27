@@ -596,46 +596,71 @@ p {
   font-size: 12px;
 }
 
-/* ---------- mode switch (dentro del paso 2) ---------- */
+/* ---------- resultados de búsqueda (paso 2) ---------- */
 
-.modeSwitch {
+.resultsHead {
   display: flex;
-  gap: 28px;
-  border-bottom: 1px solid var(--line);
-  width: auto;
-  padding: 0;
-  border-radius: 0;
-  margin-bottom: 26px;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
 }
 
-.modeTab {
-  border: none;
-  background: transparent;
-  min-height: auto;
-  padding: 0 0 12px;
-  border-radius: 0;
-  font-size: 13px;
-  font-weight: 500;
+.resultsHead .hint {
+  margin: 0;
+}
+
+.previewLink {
+  margin: 10px 0 0;
+  font-size: 12px;
+}
+
+.previewLink a {
+  color: var(--vermillion);
+  text-decoration: none;
+}
+
+.previewLink a:hover {
+  text-decoration: underline;
+}
+
+/* ---------- autopiloto de biblioteca completa (acción secundaria) ---------- */
+
+.bulkAutopilot {
+  margin-top: 32px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+}
+
+.bulkAutopilot summary {
+  cursor: pointer;
   color: var(--muted);
-  position: relative;
+  font-size: 13px;
+  list-style: none;
+  user-select: none;
+  padding: 14px 0;
 }
 
-.modeTab:hover {
+.bulkAutopilot summary::-webkit-details-marker {
+  display: none;
+}
+
+.bulkAutopilot summary::before {
+  content: "› ";
+  color: var(--vermillion);
+}
+
+.bulkAutopilot[open] summary::before {
+  content: "﹀ ";
+}
+
+.bulkAutopilot summary strong {
   color: var(--paper);
+  font-weight: 500;
 }
 
-.modeTab.selected {
+.bulkAutopilot summary:hover {
   color: var(--paper);
-}
-
-.modeTab.selected::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: -1px;
-  height: 2px;
-  background: var(--vermillion);
 }
 
 /* ---------- scope / autopilot options ---------- */
@@ -687,10 +712,6 @@ input[type="range"] {
 .primary:hover {
   background: var(--vermillion-hover);
   border-color: transparent;
-}
-
-.autoSearch {
-  margin-bottom: 0;
 }
 
 .message {
@@ -825,13 +846,6 @@ input[type="range"] {
   width: auto;
   min-height: auto;
   accent-color: var(--vermillion);
-}
-
-.chip.wide {
-  width: 100%;
-  margin-bottom: 22px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--line);
 }
 
 /* ---------- search results ---------- */
@@ -1064,10 +1078,6 @@ input[type="range"] {
   }
 
   .viewTabs {
-    gap: 20px;
-  }
-
-  .modeSwitch {
     gap: 20px;
   }
 }

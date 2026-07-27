@@ -10,27 +10,11 @@ Instala automáticamente los openings/temas (`theme-music/song1.mp3` y `backdrop
 
 Tres formas de instalarlo, elige la que uses para gestionar tus contenedores: [Docker Compose](#instalar) (cualquier sistema), [Portainer](#-instalar-con-portainer-stack-desde-git) (stack sincronizado desde Git) o [Unraid](#-instalar-en-unraid-plantilla) (plantilla lista para Community Applications).
 
-## 🧭 Guía rápida (si es tu primera vez con Docker)
-
-Instalar Kaimaku es literalmente: pegar 3 comandos y cambiar **una sola línea**. No hay que crear cuentas, ni tocar bases de datos, ni instalar nada más aparte de Docker. Todo lo demás del `docker-compose.yml` ya viene relleno con valores que funcionan tal cual.
-
-Esa única línea que sí tienes que cambiar es la ruta real de tu biblioteca de medios. Solo hace falta entender esto:
-
-- Tu servidor (NAS, servidor Linux, Unraid...) tiene una carpeta real donde viven tus series/películas, por ejemplo `/mnt/user/datos/media`.
-- Docker no ve esa carpeta a menos que se la "prestes" (esto se llama *montar un volumen*). El `docker-compose.yml` de este proyecto ya trae la línea que hace esto — tú solo pones tu ruta en vez de la de ejemplo.
-
-Si no sabes cuál es esa ruta real: entra por SSH (o la terminal de tu NAS) y navega hasta la carpeta que contiene tus subcarpetas `anime/`, `series/`, `peliculas/`... esa es, no importa cómo se llamen ni cuántas tengas. Rutas típicas según dónde corras esto:
-
-| Sistema | Ruta típica |
-| --- | --- |
-| Unraid | `/mnt/user/datos/media` |
-| Synology | `/volume1/media` |
-| TrueNAS | `/mnt/pool/media` |
-| Linux genérico | `/home/usuario/media` |
-
-Si te equivocas no pasa nada grave ni se borra nada: Kaimaku simplemente no encontrará ninguna serie, y te lo dirá con un aviso claro en la propia web (botón **⚙ Diagnóstico**, ver más abajo) para que corrijas la ruta.
+![Captura de Kaimaku](docs/screenshot.png)
 
 ## Instalar
+
+Instalar Kaimaku es literalmente: pegar 3 comandos y cambiar **una sola línea** (la ruta de tu biblioteca). No hay que crear cuentas, ni tocar bases de datos, ni instalar nada más aparte de Docker. Si te equivocas de ruta no pasa nada grave: Kaimaku simplemente no encontrará ninguna serie, y te lo dirá con un aviso claro en la propia web (botón **⚙ Diagnóstico**) para que la corrijas.
 
 Requisito único: Docker + Docker Compose v2 (`docker compose`, no `docker-compose`). La imagen ya está publicada en [Docker Hub](https://hub.docker.com/r/nemesbak/kaimaku) para `amd64` y `arm64` (funciona también en Raspberry Pi, Synology, etc.) — no hace falta compilar nada.
 
@@ -97,6 +81,22 @@ services:
 
 Lo único que **tienes** que cambiar es la línea marcada `<-- CAMBIA ESTA`, por la ruta real de tu biblioteca. Todo lo demás (`MEDIA_ROOTS`, el puerto, Jellyfin/Emby) ya viene con valores que funcionan tal cual — ajústalos solo si quieres algo distinto (refresco automático, limitar a ciertas carpetas, otro puerto).
 
+<details>
+<summary>¿No sabes cuál es la ruta real de tu biblioteca?</summary>
+
+Tu servidor (NAS, servidor Linux, Unraid...) tiene una carpeta real donde viven tus series/películas. Docker no la ve a menos que se la "prestes" (eso es la línea del volumen de arriba). Rutas típicas según dónde corras esto:
+
+| Sistema | Ruta típica |
+| --- | --- |
+| Unraid | `/mnt/user/datos/media` |
+| Synology | `/volume1/media` |
+| TrueNAS | `/mnt/pool/media` |
+| Linux genérico | `/home/usuario/media` |
+
+Si no estás seguro: entra por SSH (o la terminal de tu NAS) y navega hasta la carpeta que contiene tus subcarpetas `anime/`, `series/`, `peliculas/`... esa es, no importa cómo se llamen ni cuántas tengas.
+
+</details>
+
 **Paso 3 — Levanta el contenedor**
 
 ```bash
@@ -161,23 +161,25 @@ No hace falta crear `theme-music/` ni `backdrops/` a mano: Kaimaku los crea solo
 
 ## Cómo funciona
 
-Verás tus bibliotecas (cada subcarpeta detectada dentro de `/media`) con un filtro rápido "sin tema / con tema". Para cada serie o película tienes dos formas de instalar su opening/tema:
+1. Eliges una serie o película de la lista (con filtro de biblioteca y de "solo lo que le falta").
+2. Kaimaku busca sola en YouTube y te deja el mejor candidato ya elegido, con su porcentaje de confianza y el preview (o un enlace directo "Ver en YouTube ↗" si el vídeo no admite reproducirse embebido — algunos canales oficiales lo bloquean).
+3. Si prefieres otro resultado, la lista de candidatos está justo debajo; o abre "Buscar otro / pegar un enlace" para buscar tú a mano o pegar tu propia URL.
+4. Pulsas **Instalar** y listo — se añade a la cola, que puedes ver en la pestaña "Cola" (con progreso en vivo, cancelar/reintentar).
 
-- **Manual**: eliges el destino, Kaimaku busca en YouTube y te preselecciona el mejor candidato (priorizando fuentes oficiales en español) para que lo revises y confirmes antes de instalar. También puedes buscar a mano o pegar un enlace directo.
-- **Autopiloto**: eliges una biblioteca entera (o un destino) y un umbral mínimo de confianza. Kaimaku busca, puntúa e instala cada ítem solo si supera ese umbral — si no, lo omite en vez de instalar algo dudoso.
+¿Muchas series/películas a la vez? Debajo del botón Instalar hay una opción secundaria "¿Aplicarlo a toda la biblioteca de una vez?" — Kaimaku busca, puntúa e instala cada ítem de esa biblioteca sin que tengas que revisar uno a uno, y solo si el candidato supera el umbral de confianza mínima que fijes (si no llega, lo omite en vez de instalar algo dudoso).
 
-Ambos modos comparten una cola de instalación en tiempo real (puedes cancelar o reintentar cualquier trabajo), hacen backup del archivo anterior antes de sobrescribirlo, y refrescan solo la biblioteca de Jellyfin/Emby afectada (si has puesto las API keys).
+En ambos casos: se hace copia de seguridad del archivo anterior antes de sobrescribirlo, y se refresca solo la biblioteca de Jellyfin/Emby afectada (si has puesto las API keys).
 
 ## 🩺 Diagnóstico integrado
 
 El botón **⚙** de la cabecera abre un panel que comprueba en vivo:
 
 - **Carpetas de biblioteca**: por cada subcarpeta detectada dentro de `/media` (o cada entrada de `MEDIA_ROOTS`, si lo has rellenado a mano), si existe dentro del contenedor y cuántos destinos ha encontrado en ella. Si no existe, es casi siempre porque la ruta de la izquierda en el volumen (`- /tu/ruta/real:/media`) no es correcta.
-- **Jellyfin / Emby**: si están configurados, si se puede conectar con la URL indicada, y si tienen API key puesta. El color te dice la gravedad:
-  - 🟢 verde: todo bien, refrescará solo tras cada instalación.
-  - 🟡 amarillo: conecta pero falta la API key.
-  - 🔴 rojo: no consigue conectar (revisa la URL) o falta la carpeta.
-  - ⚪ gris: no configurado — no es un error, Jellyfin/Emby son opcionales.
+- **Jellyfin / Emby**: si están configurados, si se puede conectar con la URL indicada, y si tienen API key puesta. El indicador te dice la gravedad:
+  - punto relleno: todo bien, refrescará solo tras cada instalación.
+  - punto vacío: conecta pero falta la API key.
+  - punto en rojo/bermellón: no consigue conectar (revisa la URL) o falta la carpeta.
+  - punto tenue: no configurado — no es un error, Jellyfin/Emby son opcionales.
 
 Además, si Kaimaku detecta al abrir la web que alguna carpeta no existe o que no ha encontrado ninguna serie/película, muestra un aviso arriba de la página automáticamente, sin que tengas que ir a buscarlo.
 
@@ -198,14 +200,33 @@ Tu biblioteca de medios no se toca; solo se borra el contenedor.
 
 ## Solución de problemas
 
+### 📂 Bibliotecas y carpetas
+
 **No aparece ninguna serie o película**
-Abre el diagnóstico (botón ⚙): si alguna carpeta aparece en rojo, la ruta del volumen en `docker-compose.yml` (la línea `- /tu/ruta/real:/media`) no apunta a donde crees. Corrígela y ejecuta `docker compose up -d` de nuevo (no hace falta `pull`, solo reinicia el contenedor con la nueva ruta).
+Abre el diagnóstico (botón ⚙): si alguna carpeta aparece en rojo/bermellón, la ruta del volumen en `docker-compose.yml` (la línea `- /tu/ruta/real:/media`) no apunta a donde crees. Corrígela y ejecuta `docker compose up -d` de nuevo (no hace falta `pull`, solo reinicia el contenedor con la nueva ruta).
+
+**Aparecen carpetas que no son series/películas** (p. ej. `_backups`, `_tools`...)
+Kaimaku ignora automáticamente cualquier subcarpeta que empiece por `.` o `_`. Si quieres excluir otras, usa `MEDIA_ROOTS` para listar solo las carpetas que sí quieres tratar como biblioteca.
+
+### 🎬 Jellyfin / Emby
+
+**¿Hace falta configurar los dos, Jellyfin y Emby?**
+No — configura solo el que uses. Ambos hablan la misma API compatible con Emby (`X-Emby-Token`), así que Kaimaku los trata exactamente igual; puedes dejar el otro con la API key vacía sin que pase nada.
+
+**No refresca Jellyfin/Emby tras instalar**
+Abre el diagnóstico (botón ⚙):
+- Si aparece en gris/tenue: falta `JELLYFIN_URL`/`EMBY_URL` o la API key en `docker-compose.yml` (Panel de control → Avanzado → API Keys → Nueva clave).
+- Si aparece en rojo/bermellón: la URL no es alcanzable desde el contenedor. Prueba con la IP real en vez de `host.docker.internal` (necesario si Jellyfin/Emby corren en otra máquina de tu red), o revisa que no esté en otra red Docker distinta.
+
+### ⬇️ Descargas / YouTube
 
 **Las descargas fallan con `HTTP Error 403: Forbidden` o mencionan "JavaScript runtime"/"EJS"**
 YouTube exige ejecutar JavaScript para resolver el cifrado de sus URLs de vídeo. La imagen ya trae lo necesario para esto — comprueba que estás en la última versión (`docker compose pull && docker compose up -d`).
 
-**No refresca Jellyfin/Emby tras instalar**
-Abre el diagnóstico (botón ⚙): si Jellyfin/Emby aparecen en gris es que falta `JELLYFIN_URL`/`EMBY_URL` o las API keys en `docker-compose.yml`; si aparecen en rojo, la URL no es alcanzable desde el contenedor (prueba con la IP en vez del nombre, o revisa que no esté en otra red Docker distinta).
+**El preview aparece en blanco / solo veo "Ver en YouTube ↗"**
+Algunos canales oficiales (Crunchyroll, Aniplex, discográficas...) bloquean la reproducción embebida de sus vídeos fuera de YouTube — no es un fallo de Kaimaku, ese vídeo en concreto no admite preview. Usa el enlace "Ver en YouTube ↗" para comprobarlo antes de instalar, o elige otro candidato de la lista.
+
+### 🧹 Mantenimiento
 
 **Los logs del contenedor crecen sin límite**
 El `docker-compose.yml` no fija rotación de logs a propósito, para no meter ruido en un archivo pensado para ser simple. Si te importa (uso 24/7 a largo plazo), configúralo una vez para todos tus contenedores en `/etc/docker/daemon.json` en vez de por servicio:

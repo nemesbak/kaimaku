@@ -5,7 +5,6 @@ const state = {
   selectedDestination: "",
   libraryFilter: "",
   onlyMissing: false,
-  mode: "auto",
   preview: null,
   jobs: [],
   searchResults: [],
@@ -132,7 +131,6 @@ function renderActHeader() {
     <span class="badge ${item.has_video ? "ok" : ""}">video</span>
   `;
   $("autoScopeLibraryName").textContent = item.library;
-  $("autoScopeLibraryChk").checked = false;
 }
 
 function renderStep() {
@@ -146,11 +144,11 @@ function selectDestination(item) {
   state.preview = null;
   state.searchResults = [];
   state.selectedResultId = "";
-  setMode("auto");
   renderActHeader();
   renderPreview();
   renderSearchResults();
   renderStep();
+  autoSearch();
 }
 
 function backToList() {
@@ -164,14 +162,6 @@ function switchView(view) {
   $("viewQueue").hidden = view !== "queue";
   $("viewInstallBtn").classList.toggle("selected", view === "install");
   $("viewQueueBtn").classList.toggle("selected", view === "queue");
-}
-
-function setMode(mode) {
-  state.mode = mode;
-  $("modeManualBtn").classList.toggle("selected", mode === "manual");
-  $("modeAutoBtn").classList.toggle("selected", mode === "auto");
-  $("autoBody").hidden = mode !== "auto";
-  $("manualBody").hidden = mode !== "manual";
 }
 
 async function loadItems() {
@@ -268,9 +258,11 @@ function closeStatusModal() {
 
 function renderPreview() {
   const box = $("preview");
+  const link = $("previewLink");
   if (!state.preview) {
     box.className = "preview empty";
-    box.innerHTML = `<div class="emptyState">Pulsa "Buscar automáticamente" para ver el opening propuesto aquí.</div>`;
+    box.innerHTML = `<div class="emptyState">Buscando…</div>`;
+    link.hidden = true;
     return;
   }
   box.className = "preview";
@@ -284,6 +276,13 @@ function renderPreview() {
       <span>${state.preview.uploader || "canal desconocido"} · ${fmtDuration(state.preview.duration)}</span>
     </div>
   `;
+  const webpageUrl = state.preview.webpage_url || state.preview.embed_url;
+  if (webpageUrl) {
+    $("previewLinkAnchor").href = webpageUrl;
+    link.hidden = false;
+  } else {
+    link.hidden = true;
+  }
 }
 
 async function previewUrl() {
@@ -368,7 +367,7 @@ async function searchYoutube() {
 
 async function autoSearch() {
   if (!state.selectedDestination) return;
-  $("autoSearchBtn").disabled = true;
+  $("researchBtn").disabled = true;
   setMessage("Buscando automáticamente (opening, español/castellano, oficial)...");
   try {
     const data = await api("/api/auto-search", {
@@ -382,12 +381,12 @@ async function autoSearch() {
       selectSearchResult(data.results[0]);
       setMessage(`Mejor candidato para "${data.name}" ya seleccionado (${Math.round(data.results[0].score * 100)}%). Revisa el preview o elige otro de la lista.`, "success");
     } else {
-      setMessage(`Sin candidatos para "${data.name}", prueba una búsqueda manual.`);
+      setMessage(`Sin candidatos para "${data.name}". Búscalo tú abajo o pega un enlace.`);
     }
   } catch (err) {
     setMessage(`La autobúsqueda falló: ${err.message}`, "error");
   } finally {
-    $("autoSearchBtn").disabled = false;
+    $("researchBtn").disabled = false;
   }
 }
 
@@ -397,7 +396,7 @@ async function enqueue() {
   if ($("assetAudio").checked) assets.push("audio");
   if ($("assetVideo").checked) assets.push("video");
   if (!url) {
-    setMessage('Antes de añadir a la cola, usa "Buscar automáticamente" o la búsqueda manual y elige un resultado.', "error");
+    setMessage("Antes de instalar, elige un resultado de la lista o pega un enlace.", "error");
     return;
   }
   if (!state.selectedDestination) {
@@ -542,12 +541,8 @@ async function startAutopilot() {
     min_score: Number($("autoThreshold").value) / 100,
     overwrite: $("autoOverwrite").checked,
     refresh: $("autoRefresh").checked,
+    library: item.library,
   };
-  if ($("autoScopeLibraryChk").checked) {
-    body.library = item.library;
-  } else {
-    body.destination = item.path;
-  }
 
   $("autopilotStartBtn").disabled = true;
   setMessage("Iniciando autopiloto...", "", "autoMsg");
@@ -664,7 +659,7 @@ $("viewQueueBtn").addEventListener("click", () => switchView("queue"));
 $("previewBtn").addEventListener("click", previewUrl);
 $("enqueueBtn").addEventListener("click", enqueue);
 $("searchBtn").addEventListener("click", searchYoutube);
-$("autoSearchBtn").addEventListener("click", autoSearch);
+$("researchBtn").addEventListener("click", autoSearch);
 $("searchQuery").addEventListener("keydown", (ev) => {
   if (ev.key === "Enter") {
     ev.preventDefault();
@@ -672,8 +667,6 @@ $("searchQuery").addEventListener("keydown", (ev) => {
   }
 });
 $("jobs").addEventListener("click", onJobsClick);
-$("modeManualBtn").addEventListener("click", () => setMode("manual"));
-$("modeAutoBtn").addEventListener("click", () => setMode("auto"));
 $("autoThreshold").addEventListener("input", () => {
   $("autoThresholdLabel").textContent = `${$("autoThreshold").value}%`;
 });
