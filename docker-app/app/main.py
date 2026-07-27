@@ -150,7 +150,7 @@ GENERIC_QUERY_TEMPLATES = [
     "{title} soundtrack theme song",
     "{title} tema de entrada español",
     "{title} intro tema musical",
-    "{title} trailer oficial español",
+    "{title} banda sonora original español",
 ]
 
 ANIME_LIBRARY_HINTS = ("anime", "animacion")
@@ -179,8 +179,6 @@ def score_auto_candidate(name: str, year: int | None, video: dict[str, Any]) -> 
         score += 0.35
     if any(term in title for term in ("opening", "op ", "theme", "pv", "tema", "intro", "soundtrack", "banda sonora")):
         score += 0.25
-    elif "trailer" in title:
-        score += 0.12
     if any(term in title for term in ("español", "espanol", "castellano", "spanish", "latino")):
         score += 0.18
     if any(term in title for term in ("official", "crunchyroll", "aniplex", "toho", "netflix", "oficial")):
@@ -194,7 +192,7 @@ def score_auto_candidate(name: str, year: int | None, video: dict[str, Any]) -> 
         score += 0.10
     if duration and duration > 360:
         score -= 0.25
-    if any(term in title for term in ("reaction", "cover", "piano", "amv", "nightcore", "review")):
+    if any(term in title for term in ("reaction", "cover", "piano", "amv", "nightcore", "review", "trailer", "tráiler")):
         score -= 0.30
     return max(0.0, min(1.0, score))
 

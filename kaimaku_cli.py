@@ -283,7 +283,7 @@ def score_candidate(item: dict[str, Any], video: dict[str, Any], config: dict[st
         score += 0.35
     if original and original in title:
         score += 0.15
-    if any(term in title for term in ("opening", "op ", "theme", "trailer", "pv", "teaser")):
+    if any(term in title for term in ("opening", "op ", "theme", "pv", "teaser")):
         score += 0.25
     if any(term in title for term in ("español", "espanol", "castellano", "spanish", "sub español", "sub espanol", "latino")):
         score += 0.18
@@ -299,7 +299,7 @@ def score_candidate(item: dict[str, Any], video: dict[str, Any], config: dict[st
         score += 0.10
     if duration and duration > max_seconds:
         score -= 0.25
-    if any(term in title for term in ("reaction", "cover", "piano", "amv", "nightcore", "review")):
+    if any(term in title for term in ("reaction", "cover", "piano", "amv", "nightcore", "review", "trailer", "tráiler")):
         score -= 0.30
     return max(0.0, min(1.0, score))
 
