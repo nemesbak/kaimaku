@@ -814,3 +814,7 @@ input {
     --text-faint: #9a8c86;
   }
 }
+
+.overlay[hidden] {
+  display: none;
+}
