@@ -17,34 +17,46 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
-from urllib import request
+from urllib import parse as urlparse, request
 from urllib.error import HTTPError, URLError
 
 import imageio_ffmpeg
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+# ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 BACKUP_DIR = DATA_DIR / "backups"
 WORK_DIR = DATA_DIR / "work"
+STATE_FILE = DATA_DIR / "state.json"
 
 MEDIA_BASE = Path(os.environ.get("MEDIA_BASE", "/media"))
 _media_roots_env = os.environ.get("MEDIA_ROOTS", "").strip()
 _explicit_media_roots = [Path(p) for p in _media_roots_env.split(",") if p.strip()] or None
 
+THEME_AUDIO = Path("theme-music/song1.mp3")
+THEME_VIDEO = Path("backdrops/intro.mp4")
+
+AUTO_SCAN_INTERVAL_HOURS = float(os.environ.get("AUTO_SCAN_INTERVAL_HOURS", "12") or "12")
+AUTO_MIN_SCORE = float(os.environ.get("AUTO_MIN_SCORE", "0.75") or "0.75")
+AUTO_ASSETS = [a.strip() for a in os.environ.get("AUTO_ASSETS", "audio,video").split(",") if a.strip()]
+
+TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", "").strip()
+TG_CHAT_ID = os.environ.get("TG_CHAT_ID", "").strip()
+TG_TOPIC_ID = os.environ.get("TG_TOPIC_ID", "").strip()
+
 
 def discover_media_roots() -> list[Path]:
     """Auto-detect libraries as the immediate subfolders of /media, so a fresh
     install works without having to know or type any folder names — only
-    MEDIA_BASE (i.e. the volume mapped to /media) has to be right. Falls back
-    to treating /media itself as a single library if it has no subfolders
-    (or doesn't exist yet), so the status panel still has something to report.
-    """
+    MEDIA_BASE (i.e. the volume mapped to /media) has to be right."""
     if not MEDIA_BASE.is_dir():
         return [MEDIA_BASE]
     subdirs = sorted(
@@ -55,17 +67,15 @@ def discover_media_roots() -> list[Path]:
 
 
 def current_media_roots() -> list[Path]:
-    # Recomputed on every call (auto-discovery must reflect subfolders added later
-    # without needing a restart); MEDIA_ROOTS itself is read once since it's a
-    # deliberate user override.
     return _explicit_media_roots if _explicit_media_roots is not None else discover_media_roots()
-
-THEME_AUDIO = Path("theme-music/song1.mp3")
-THEME_VIDEO = Path("backdrops/intro.mp4")
 
 
 def now_id() -> str:
     return datetime.now().strftime("%Y%m%d-%H%M%S")
+
+
+def now_iso() -> str:
+    return datetime.now().isoformat(timespec="seconds")
 
 
 def clean_name(value: str) -> str:
@@ -99,25 +109,91 @@ def media_root_name(path: Path) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Persisted state (survives restarts): per-item install history + review queue
+# ---------------------------------------------------------------------------
+
+_state_lock = threading.Lock()
+_state: dict[str, Any] = {}
+
+
+def load_state() -> None:
+    global _state
+    if STATE_FILE.exists():
+        try:
+            _state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            _state = {}
+    _state.setdefault("items", {})
+
+
+def save_state() -> None:
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = STATE_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(_state, ensure_ascii=False, indent=2), encoding="utf-8")
+    tmp.replace(STATE_FILE)
+
+
+def item_state(item_id: str) -> dict[str, Any]:
+    with _state_lock:
+        return dict(_state["items"].get(item_id, {}))
+
+
+def update_item_state(item_id: str, **fields: Any) -> None:
+    with _state_lock:
+        entry = _state["items"].setdefault(item_id, {})
+        entry.update(fields)
+        save_state()
+
+
+def clear_review(item_id: str) -> None:
+    with _state_lock:
+        entry = _state["items"].get(item_id)
+        if entry:
+            entry["needs_review"] = False
+            entry["candidates"] = []
+            save_state()
+
+
+# ---------------------------------------------------------------------------
+# Library scan
+# ---------------------------------------------------------------------------
+
+VIDEO_EXT = {".mkv", ".mp4", ".avi", ".mov", ".m4v", ".ts"}
+
+
 def media_items() -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for root in current_media_roots():
         if not root.exists():
             continue
-        for child in sorted(p for p in root.iterdir() if p.is_dir()):
+        try:
+            children = sorted(p for p in root.iterdir() if p.is_dir())
+        except OSError:
+            continue
+        for child in children:
             if child.name.startswith("_"):
                 continue
-            kind = "movie" if any(p.is_file() and p.suffix.lower() in {".mkv", ".mp4", ".avi", ".mov"} for p in child.iterdir()) else "series"
+            try:
+                kind = "movie" if any(p.is_file() and p.suffix.lower() in VIDEO_EXT for p in child.iterdir()) else "series"
+            except OSError:
+                continue
+            item_id = safe_rel(child.resolve())
+            state = item_state(item_id)
             items.append(
                 {
-                    "id": safe_rel(child.resolve()),
+                    "id": item_id,
                     "name": child.name,
-                    "path": safe_rel(child.resolve()),
+                    "path": item_id,
                     "root": safe_rel(root.resolve()),
                     "library": root.name,
                     "kind": kind,
                     "has_audio": (child / THEME_AUDIO).is_file(),
                     "has_video": (child / THEME_VIDEO).is_file(),
+                    "needs_review": bool(state.get("needs_review")),
+                    "last_scanned": state.get("last_scanned"),
+                    "audio_source": state.get("audio_source"),
+                    "video_source": state.get("video_source"),
                 }
             )
     return items
@@ -154,7 +230,6 @@ GENERIC_QUERY_TEMPLATES = [
 ]
 
 ANIME_LIBRARY_HINTS = ("anime", "animacion")
-
 OFFICIAL_CHANNEL_TERMS = ("crunchyroll", "vizmedia", "aniplex", "toho", "netflix anime", "muse asia", "funimation")
 
 
@@ -211,12 +286,12 @@ running_processes: dict[str, subprocess.Popen[str]] = {}
 cancelled_jobs: set[str] = set()
 
 
-def run_cancelable(cmd: list[str], job: "Job") -> subprocess.CompletedProcess[str]:
+def run_cancelable(cmd: list[str], job_id: str) -> subprocess.CompletedProcess[str]:
     proc = subprocess.Popen(cmd, encoding="utf-8", errors="replace", stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    running_processes[job.id] = proc
+    running_processes[job_id] = proc
     try:
         while True:
-            if job.id in cancelled_jobs:
+            if job_id in cancelled_jobs:
                 proc.terminate()
                 try:
                     proc.wait(timeout=5)
@@ -224,14 +299,12 @@ def run_cancelable(cmd: list[str], job: "Job") -> subprocess.CompletedProcess[st
                     proc.kill()
                 raise JobCancelled()
             try:
-                stdout, stderr = proc.communicate(timeout=0.4)
-                if job.id in cancelled_jobs:
-                    raise JobCancelled()
+                stdout, stderr = proc.communicate(timeout=1)
                 return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
             except subprocess.TimeoutExpired:
                 continue
     finally:
-        running_processes.pop(job.id, None)
+        running_processes.pop(job_id, None)
 
 
 def yt_dlp_json(url: str) -> dict[str, Any]:
@@ -242,41 +315,22 @@ def yt_dlp_json(url: str) -> dict[str, Any]:
     return json.loads(proc.stdout)
 
 
-def yt_dlp_json_cancelable(job: "Job", url: str) -> dict[str, Any]:
-    cmd = [sys.executable, "-m", "yt_dlp", "--dump-single-json", "--no-playlist", url]
-    proc = run_cancelable(cmd, job)
-    if proc.returncode != 0:
-        raise RuntimeError(proc.stderr.strip() or proc.stdout.strip() or "yt-dlp metadata failed")
-    return json.loads(proc.stdout)
-
-
 def ffmpeg_exe() -> str:
     return imageio_ffmpeg.get_ffmpeg_exe()
 
 
-def download_audio(job: "Job", url: str, target: Path) -> None:
+def download_audio(job_id: str, url: str, target: Path, log: Any) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     temp = target.with_suffix(".download.%(ext)s")
     cmd = [
-        sys.executable,
-        "-m",
-        "yt_dlp",
-        "--no-playlist",
-        "--ffmpeg-location",
-        ffmpeg_exe(),
-        "-f",
-        "bestaudio/best",
-        "--extract-audio",
-        "--audio-format",
-        "mp3",
-        "--audio-quality",
-        "0",
-        "-o",
-        str(temp),
-        url,
+        sys.executable, "-m", "yt_dlp", "--no-playlist",
+        "--ffmpeg-location", ffmpeg_exe(),
+        "-f", "bestaudio/best",
+        "--extract-audio", "--audio-format", "mp3", "--audio-quality", "0",
+        "-o", str(temp), url,
     ]
-    job_log(job, "Descargando audio y convirtiendo a mp3")
-    proc = run_cancelable(cmd, job)
+    log("Descargando audio y convirtiendo a mp3")
+    proc = run_cancelable(cmd, job_id)
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr.strip() or "audio download failed")
     found = sorted(target.parent.glob(target.stem + ".download.*"), key=lambda p: p.stat().st_mtime)
@@ -285,26 +339,18 @@ def download_audio(job: "Job", url: str, target: Path) -> None:
     found[-1].replace(target)
 
 
-def download_video(job: "Job", url: str, target: Path) -> None:
+def download_video(job_id: str, url: str, target: Path, log: Any) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     temp = target.with_suffix(".download.%(ext)s")
     cmd = [
-        sys.executable,
-        "-m",
-        "yt_dlp",
-        "--no-playlist",
-        "--ffmpeg-location",
-        ffmpeg_exe(),
-        "-f",
-        "bv*[height<=720]+ba/b[height<=720]/best",
-        "--merge-output-format",
-        "mp4",
-        "-o",
-        str(temp),
-        url,
+        sys.executable, "-m", "yt_dlp", "--no-playlist",
+        "--ffmpeg-location", ffmpeg_exe(),
+        "-f", "bv*[height<=720]+ba/b[height<=720]/best",
+        "--merge-output-format", "mp4",
+        "-o", str(temp), url,
     ]
-    job_log(job, "Descargando video y convirtiendo a mp4")
-    proc = run_cancelable(cmd, job)
+    log("Descargando video y convirtiendo a mp4")
+    proc = run_cancelable(cmd, job_id)
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr.strip() or "video download failed")
     found = sorted(target.parent.glob(target.stem + ".download.*"), key=lambda p: p.stat().st_mtime)
@@ -321,6 +367,65 @@ def backup_existing(target: Path, item_dir: Path) -> str | None:
     backup.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(target, backup)
     return safe_rel(backup)
+
+
+def _auto_search_one_query(query: str) -> list[dict[str, Any]]:
+    cmd = [sys.executable, "-m", "yt_dlp", "ytsearch5:" + query, "--dump-json", "--no-playlist", "--flat-playlist"]
+    proc = run(cmd)
+    if proc.returncode != 0:
+        return []
+    videos = []
+    for line in proc.stdout.splitlines():
+        if line.strip():
+            try:
+                videos.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return videos
+
+
+def auto_search_candidates(destination: Path, limit: int = 8) -> tuple[str, int | None, list[dict[str, Any]]]:
+    name, year = parse_folder_name(destination.name)
+    anime = is_anime_library(media_root_name(destination))
+    queries = build_auto_queries(name, anime)
+
+    seen: set[str] = set()
+    candidates: list[dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=len(queries)) as pool:
+        for query, videos in zip(queries, pool.map(_auto_search_one_query, queries)):
+            for video in videos:
+                video_id = video.get("id")
+                if not video_id or video_id in seen:
+                    continue
+                seen.add(video_id)
+                thumbnails = video.get("thumbnails") or []
+                thumbnail = (
+                    video.get("thumbnail")
+                    or (thumbnails[-1].get("url") if thumbnails else None)
+                    or f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
+                )
+                candidates.append(
+                    {
+                        "id": video_id,
+                        "title": video.get("title"),
+                        "uploader": video.get("uploader") or video.get("channel"),
+                        "duration": video.get("duration"),
+                        "thumbnail": thumbnail,
+                        "webpage_url": video.get("webpage_url") or video.get("url") or f"https://www.youtube.com/watch?v={video_id}",
+                        "embed_url": f"https://www.youtube.com/embed/{video_id}",
+                        "score": round(score_auto_candidate(name, year, video), 3),
+                        "query": query,
+                    }
+                )
+    candidates.sort(key=lambda c: c["score"], reverse=True)
+    return name, year, candidates[: max(1, min(limit, 15))]
+
+
+# ---------------------------------------------------------------------------
+# Jellyfin / Emby integration: reachability, refresh, poster proxy
+# ---------------------------------------------------------------------------
+
+SERVERS = [("jellyfin", "JELLYFIN_URL", "JELLYFIN_API_KEY"), ("emby", "EMBY_URL", "EMBY_API_KEY")]
 
 
 def find_library_id(base_url: str, api_key: str, library_name: str) -> str | None:
@@ -367,18 +472,10 @@ def roots_status() -> list[dict[str, Any]]:
 
 
 def refresh_servers(library_name: str) -> list[dict[str, Any]]:
-    """Refresh only the Jellyfin/Emby library whose folder matches `library_name`.
-
-    Deliberately scoped (not /Library/Refresh) so installing one theme doesn't
-    trigger a full-server rescan across every library. Matched by folder name
-    rather than full path, since Jellyfin/Emby containers can mount the same
-    media share at different internal paths.
-    """
+    """Scoped refresh (not /Library/Refresh) so installing one theme doesn't
+    trigger a full-server rescan across every library."""
     results: list[dict[str, Any]] = []
-    for name, url_key, token_key in [
-        ("jellyfin", "JELLYFIN_URL", "JELLYFIN_API_KEY"),
-        ("emby", "EMBY_URL", "EMBY_API_KEY"),
-    ]:
+    for name, url_key, token_key in SERVERS:
         token = os.environ.get(token_key, "").strip()
         base = os.environ.get(url_key, "").strip()
         if not token or not base:
@@ -407,6 +504,91 @@ def refresh_servers(library_name: str) -> list[dict[str, Any]]:
     return results
 
 
+_poster_index_cache: dict[str, dict[str, Any]] = {}
+_poster_index_at: float = 0.0
+_poster_index_lock = threading.Lock()
+POSTER_INDEX_TTL = 600.0
+
+
+def _fetch_poster_index_for(base: str, token: str) -> dict[tuple[str, str], dict[str, Any]]:
+    """(library, folder-name) -> {id, base} for every Movie/Series in the server,
+    matched by folder name rather than full path (Jellyfin/Emby may mount the
+    same share at a different internal path than Kaimaku)."""
+    out: dict[tuple[str, str], dict[str, Any]] = {}
+    req = request.Request(
+        base.rstrip("/") + "/Items?Recursive=true&IncludeItemTypes=Movie,Series"
+        "&Fields=Path&EnableImages=true&Limit=100000",
+        method="GET",
+    )
+    req.add_header("X-Emby-Token", token)
+    with request.urlopen(req, timeout=30) as resp:
+        payload = json.loads(resp.read())
+    for entry in payload.get("Items") or []:
+        raw_path = entry.get("Path")
+        if not raw_path:
+            continue
+        p = Path(raw_path.replace("\\", "/"))
+        folder = p.name if entry.get("IsFolder", True) else p.parent.name
+        library = p.parent.name if entry.get("IsFolder", True) else p.parent.parent.name
+        has_image = bool((entry.get("ImageTags") or {}).get("Primary"))
+        out[(library.lower(), folder.lower())] = {"id": entry.get("Id"), "base": base, "token": token, "has_image": has_image}
+    return out
+
+
+def poster_index() -> dict[tuple[str, str], dict[str, Any]]:
+    global _poster_index_cache, _poster_index_at
+    with _poster_index_lock:
+        if time.time() - _poster_index_at < POSTER_INDEX_TTL and _poster_index_cache:
+            return _poster_index_cache
+        merged: dict[tuple[str, str], dict[str, Any]] = {}
+        for _name, url_key, token_key in SERVERS:
+            token = os.environ.get(token_key, "").strip()
+            base = os.environ.get(url_key, "").strip()
+            if not token or not base:
+                continue
+            try:
+                merged.update(_fetch_poster_index_for(base, token))
+            except Exception:
+                continue
+        _poster_index_cache = merged
+        _poster_index_at = time.time()
+        return merged
+
+
+def find_poster_ref(library: str, folder_name: str) -> dict[str, Any] | None:
+    idx = poster_index()
+    entry = idx.get((library.lower(), folder_name.lower()))
+    if entry and entry.get("has_image"):
+        return entry
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Telegram notifications (optional — silent if not configured)
+# ---------------------------------------------------------------------------
+
+def tg_escape(s: str) -> str:
+    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def notify_telegram(text: str) -> None:
+    if not TG_BOT_TOKEN or not TG_CHAT_ID:
+        return
+    body: dict[str, str] = {"chat_id": TG_CHAT_ID, "text": text, "parse_mode": "HTML"}
+    if TG_TOPIC_ID:
+        body["message_thread_id"] = TG_TOPIC_ID
+    data = urlparse.urlencode(body).encode()
+    req = request.Request(f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage", data=data, method="POST")
+    try:
+        request.urlopen(req, timeout=15)
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Jobs (manual install) + SSE broadcast
+# ---------------------------------------------------------------------------
+
 class PreviewRequest(BaseModel):
     url: str
 
@@ -416,8 +598,7 @@ class SearchRequest(BaseModel):
     limit: int = 8
 
 
-class AutoSearchRequest(BaseModel):
-    destination: str
+class ItemCandidatesRequest(BaseModel):
     limit: int = 8
 
 
@@ -425,15 +606,6 @@ class JobRequest(BaseModel):
     url: str
     destination: str
     assets: list[Literal["audio", "video"]] = Field(default_factory=lambda: ["audio", "video"])
-    refresh: bool = True
-
-
-class AutopilotRequest(BaseModel):
-    library: str | None = None
-    destination: str | None = None
-    assets: list[Literal["audio", "video"]] = Field(default_factory=lambda: ["audio", "video"])
-    min_score: float = 0.75
-    overwrite: bool = False
     refresh: bool = True
 
 
@@ -455,24 +627,6 @@ job_queue: "queue.Queue[str]" = queue.Queue()
 event_subscribers: list[asyncio.Queue[str]] = []
 
 
-@dataclass
-class AutopilotRun:
-    id: str
-    scope: str
-    total: int
-    status: str = "running"
-    processed: int = 0
-    queued: list[str] = field(default_factory=list)
-    skipped: list[dict[str, Any]] = field(default_factory=list)
-    logs: list[str] = field(default_factory=list)
-    created_at: float = field(default_factory=time.time)
-    updated_at: float = field(default_factory=time.time)
-
-
-autopilot_runs: dict[str, AutopilotRun] = {}
-autopilot_cancelled: set[str] = set()
-
-
 def emit_event(payload: dict[str, Any]) -> None:
     data = json.dumps(payload, ensure_ascii=False)
     for subscriber in list(event_subscribers):
@@ -488,56 +642,67 @@ def job_log(job: Job, message: str) -> None:
     emit_event({"type": "job", "job": asdict(job)})
 
 
-def autopilot_log(run: AutopilotRun, message: str) -> None:
-    run.logs.append(f"{datetime.now().strftime('%H:%M:%S')} {message}")
-    run.updated_at = time.time()
-    emit_event({"type": "autopilot", "run": asdict(run)})
+def run_install(job: Job, source: dict[str, Any] | None = None) -> None:
+    """Downloads job.url into job.destination for job.assets, updates persisted
+    item state on success, and (if requested) triggers a scoped library refresh."""
+    destination = ensure_inside_roots(Path(job.destination))
+    item_id = safe_rel(destination)
+    work = WORK_DIR / job.id
+    shutil.rmtree(work, ignore_errors=True)
+    work.mkdir(parents=True, exist_ok=True)
 
+    metadata = yt_dlp_json(job.url)
+    job.result["title"] = metadata.get("title")
+    job.result["webpage_url"] = metadata.get("webpage_url") or job.url
+    job_log(job, f"Fuente: {metadata.get('title') or job.url}")
 
-def needed_assets(item: dict[str, Any], assets: list[str], overwrite: bool) -> list[str]:
-    if overwrite:
-        return list(assets)
-    return [a for a in assets if not (a == "audio" and item["has_audio"]) and not (a == "video" and item["has_video"])]
+    installed: list[dict[str, Any]] = []
+    backups: list[str] = []
+    job.result["installed"] = installed
+    job.result["backups"] = backups
 
+    src_meta = source or {
+        "id": metadata.get("id"),
+        "title": metadata.get("title"),
+        "uploader": metadata.get("uploader") or metadata.get("channel"),
+        "url": metadata.get("webpage_url") or job.url,
+        "installed_at": now_iso(),
+    }
+    src_meta = {**src_meta, "installed_at": now_iso()}
 
-def autopilot_worker(run_id: str, items: list[dict[str, Any]], req: AutopilotRequest) -> None:
-    run = autopilot_runs[run_id]
-    for item in items:
-        if run_id in autopilot_cancelled:
-            run.status = "cancelled"
-            autopilot_log(run, "Autopiloto cancelado")
-            break
+    if "audio" in job.assets:
+        staged = work / "song1.mp3"
+        download_audio(job.id, job.url, staged, lambda m: job_log(job, m))
+        target = destination / THEME_AUDIO
+        backup = backup_existing(target, destination)
+        if backup:
+            backups.append(backup)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(staged, target)
+        installed.append({"asset": "audio", "target": safe_rel(target)})
+        job_log(job, f"Audio instalado: {THEME_AUDIO}")
+        update_item_state(item_id, audio_source=src_meta)
 
-        run.processed += 1
-        needed = needed_assets(item, req.assets, req.overwrite)
-        if not needed:
-            run.skipped.append({"name": item["name"], "reason": "ya instalado"})
-            autopilot_log(run, f"Omitido (ya instalado): {item['name']}")
-            continue
+    if "video" in job.assets:
+        staged = work / "intro.mp4"
+        download_video(job.id, job.url, staged, lambda m: job_log(job, m))
+        target = destination / THEME_VIDEO
+        backup = backup_existing(target, destination)
+        if backup:
+            backups.append(backup)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(staged, target)
+        installed.append({"asset": "video", "target": safe_rel(target)})
+        job_log(job, f"Video instalado: {THEME_VIDEO}")
+        update_item_state(item_id, video_source=src_meta)
 
-        try:
-            _, _, candidates = auto_search_candidates(Path(item["path"]))
-        except Exception as exc:
-            run.skipped.append({"name": item["name"], "reason": str(exc)})
-            autopilot_log(run, f"Error buscando {item['name']}: {exc}")
-            continue
+    clear_review(item_id)
 
-        best = candidates[0] if candidates else None
-        if not best or best["score"] < req.min_score:
-            pct = round(best["score"] * 100) if best else 0
-            run.skipped.append({"name": item["name"], "reason": f"mejor candidato {pct}% < umbral"})
-            autopilot_log(run, f"Omitido (sin candidato fiable, {pct}%): {item['name']}")
-            continue
-
-        job = _enqueue(best["webpage_url"], item["path"], needed, req.refresh)
-        run.queued.append(job.id)
-        autopilot_log(run, f"Encolado ({round(best['score'] * 100)}%): {item['name']} <- {best['title']}")
-        time.sleep(1.5)
-
-    autopilot_cancelled.discard(run_id)
-    if run.status == "running":
-        run.status = "done"
-        autopilot_log(run, f"Autopiloto completado: {len(run.queued)} encolados, {len(run.skipped)} omitidos")
+    library_name = media_root_name(destination)
+    refresh = refresh_servers(library_name) if library_name and job.result.get("refresh", True) else []
+    job.result["refresh"] = refresh
+    if job.assets and refresh:
+        job_log(job, "Bibliotecas refrescadas")
 
 
 def worker_loop() -> None:
@@ -550,60 +715,15 @@ def worker_loop() -> None:
         try:
             job.status = "running"
             job_log(job, "Job iniciado")
-            destination = ensure_inside_roots(Path(job.destination))
-            work = WORK_DIR / job.id
-            shutil.rmtree(work, ignore_errors=True)
-            work.mkdir(parents=True, exist_ok=True)
-
-            metadata = yt_dlp_json_cancelable(job, job.url)
-            job.result["title"] = metadata.get("title")
-            job.result["webpage_url"] = metadata.get("webpage_url") or job.url
-            job_log(job, f"Fuente: {metadata.get('title') or job.url}")
-
-            installed: list[dict[str, Any]] = []
-            backups: list[str] = []
-            job.result["installed"] = installed
-            job.result["backups"] = backups
-
-            if "audio" in job.assets:
-                staged_audio = work / "song1.mp3"
-                download_audio(job, job.url, staged_audio)
-                target = destination / THEME_AUDIO
-                backup = backup_existing(target, destination)
-                if backup:
-                    backups.append(backup)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(staged_audio, target)
-                installed.append({"asset": "audio", "target": safe_rel(target)})
-                job_log(job, f"Audio instalado: {THEME_AUDIO}")
-
-            if "video" in job.assets:
-                staged_video = work / "intro.mp4"
-                download_video(job, job.url, staged_video)
-                target = destination / THEME_VIDEO
-                backup = backup_existing(target, destination)
-                if backup:
-                    backups.append(backup)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(staged_video, target)
-                installed.append({"asset": "video", "target": safe_rel(target)})
-                job_log(job, f"Video instalado: {THEME_VIDEO}")
-
-            library_name = media_root_name(destination)
-            refresh = refresh_servers(library_name) if library_name and job.result.get("refresh", True) else []
-            job.result["refresh"] = refresh
-            if job.assets and refresh:
-                job_log(job, "Bibliotecas refrescadas")
+            run_install(job)
             job.status = "done"
-            job_log(job, "Job completado")
+            job_log(job, "Completado")
         except JobCancelled:
             job.status = "cancelled"
             job_log(job, "Job cancelado")
         except Exception as exc:
             job.status = "failed"
             job_log(job, f"ERROR: {exc}")
-            # Best-effort: if part of the job (e.g. audio) already made it to disk before
-            # the failure, still refresh the library so that partial install shows up.
             if job.result.get("installed"):
                 try:
                     library_name = media_root_name(ensure_inside_roots(Path(job.destination)))
@@ -621,6 +741,143 @@ def worker_loop() -> None:
             job_queue.task_done()
 
 
+def _enqueue(url: str, destination: str, assets: list[str], refresh: bool) -> Job:
+    job = Job(id=uuid.uuid4().hex[:12], url=url, destination=destination, assets=list(assets))
+    job.result["refresh"] = refresh
+    jobs[job.id] = job
+    job_queue.put(job.id)
+    emit_event({"type": "job", "job": asdict(job)})
+    return job
+
+
+# ---------------------------------------------------------------------------
+# Auto-scan: the background worker that replaces manually-triggered "autopilot".
+# Finds items missing audio/video, installs anything confident enough on its
+# own, flags the rest for manual review in the UI, and sends one batched
+# Telegram summary per run (only when there's something worth reporting).
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ScanState:
+    running: bool = False
+    last_started: str | None = None
+    last_finished: str | None = None
+    last_summary: dict[str, Any] = field(default_factory=dict)
+
+
+scan_state = ScanState()
+scan_lock = threading.Lock()
+
+
+def run_auto_scan(trigger: str = "schedule") -> dict[str, Any]:
+    if not scan_lock.acquire(blocking=False):
+        return {"skipped": "already running"}
+    try:
+        scan_state.running = True
+        scan_state.last_started = now_iso()
+        emit_event({"type": "scan", "scan": asdict(scan_state)})
+
+        installed_names: list[str] = []
+        newly_review_names: list[str] = []
+        error_names: list[str] = []
+        touched_libraries: set[str] = set()
+
+        for item in media_items():
+            needed = [a for a in AUTO_ASSETS if not item.get(f"has_{a}")]
+            if not needed:
+                continue
+            was_review = item["needs_review"]
+            try:
+                _, _, candidates = auto_search_candidates(Path(item["path"]))
+            except Exception as exc:
+                error_names.append(item["name"])
+                update_item_state(item["id"], last_scanned=now_iso())
+                emit_event({"type": "scan_progress", "item": item["name"], "outcome": "error", "detail": str(exc)})
+                continue
+
+            best = candidates[0] if candidates else None
+            if best and best["score"] >= AUTO_MIN_SCORE:
+                job = Job(id=uuid.uuid4().hex[:12], url=best["webpage_url"], destination=item["path"], assets=needed)
+                job.result["refresh"] = False  # batched at the end of the whole scan instead
+                jobs[job.id] = job
+                try:
+                    run_install(job, source={
+                        "id": best["id"], "title": best["title"], "uploader": best.get("uploader"),
+                        "url": best["webpage_url"],
+                    })
+                    job.status = "done"
+                    installed_names.append(f"{item['name']} ({round(best['score'] * 100)}%)")
+                    touched_libraries.add(item["library"])
+                    emit_event({"type": "scan_progress", "item": item["name"], "outcome": "installed"})
+                except Exception as exc:
+                    job.status = "failed"
+                    error_names.append(item["name"])
+                    emit_event({"type": "scan_progress", "item": item["name"], "outcome": "error", "detail": str(exc)})
+                update_item_state(item["id"], last_scanned=now_iso())
+            else:
+                update_item_state(
+                    item["id"],
+                    needs_review=True,
+                    candidates=candidates[:5],
+                    last_scanned=now_iso(),
+                )
+                if not was_review:
+                    newly_review_names.append(item["name"])
+                emit_event({"type": "scan_progress", "item": item["name"], "outcome": "review"})
+
+        for library in touched_libraries:
+            refresh_servers(library)
+
+        summary = {
+            "trigger": trigger,
+            "installed": installed_names,
+            "new_review": newly_review_names,
+            "errors": error_names,
+            "finished_at": now_iso(),
+        }
+        scan_state.last_finished = now_iso()
+        scan_state.last_summary = summary
+        emit_event({"type": "scan", "scan": asdict(scan_state)})
+
+        if installed_names or newly_review_names or error_names:
+            lines = [f"🎬 <b>Kaimaku — escaneo automático</b>", ""]
+            if installed_names:
+                lines.append(f"✅ Instalados ({len(installed_names)}):")
+                lines += [f"• {tg_escape(n)}" for n in installed_names[:15]]
+                if len(installed_names) > 15:
+                    lines.append(f"…y {len(installed_names) - 15} más")
+                lines.append("")
+            if newly_review_names:
+                lines.append(f"👀 Pendientes de revisión ({len(newly_review_names)}):")
+                lines += [f"• {tg_escape(n)}" for n in newly_review_names[:15]]
+                if len(newly_review_names) > 15:
+                    lines.append(f"…y {len(newly_review_names) - 15} más")
+                lines.append("")
+            if error_names:
+                lines.append(f"⚠️ Errores ({len(error_names)}):")
+                lines += [f"• {tg_escape(n)}" for n in error_names[:10]]
+            notify_telegram("\n".join(lines).strip()[:4000])
+
+        return summary
+    finally:
+        scan_state.running = False
+        scan_lock.release()
+
+
+def auto_scan_loop() -> None:
+    time.sleep(120)  # let the app + yt-dlp warm up before the first pass
+    while True:
+        try:
+            run_auto_scan(trigger="schedule")
+        except Exception:
+            pass
+        time.sleep(max(1.0, AUTO_SCAN_INTERVAL_HOURS) * 3600)
+
+
+# ---------------------------------------------------------------------------
+# App
+# ---------------------------------------------------------------------------
+
 app = FastAPI(title="Kaimaku")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -628,25 +885,18 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 @app.on_event("startup")
 def startup() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    # work/ only ever holds scratch files for jobs tracked in the (in-memory) `jobs`
-    # dict, which starts empty on every boot — anything left over here belongs to a
-    # previous process life (crash, restart mid-download) and is safe to discard.
+    load_state()
     shutil.rmtree(WORK_DIR, ignore_errors=True)
     WORK_DIR.mkdir(parents=True, exist_ok=True)
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    thread = threading.Thread(target=worker_loop, daemon=True)
-    thread.start()
+    threading.Thread(target=worker_loop, daemon=True).start()
+    threading.Thread(target=auto_scan_loop, daemon=True).start()
 
 
 @app.on_event("shutdown")
 def shutdown() -> None:
-    # Jobs/autopilot state is in-memory only, so a restart mid-download would
-    # otherwise silently kill it partway through. Give the current job (if any)
-    # a chance to finish first — bounded, so a stuck job can't block shutdown
-    # forever. Keep docker-compose's stop_grace_period comfortably above this.
     if not any(j.status == "running" for j in jobs.values()):
         return
-    print("shutdown: waiting for the running job to finish before exiting...", flush=True)
     deadline = time.time() + 25
     while any(j.status == "running" for j in jobs.values()) and time.time() < deadline:
         time.sleep(0.5)
@@ -657,23 +907,48 @@ def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
 
 
-@app.get("/api/items")
-def list_items() -> dict[str, Any]:
-    return {"roots": [safe_rel(p) for p in current_media_roots()], "items": media_items()}
+@app.get("/api/library")
+def get_library() -> dict[str, Any]:
+    items = media_items()
+    libraries = sorted({i["library"] for i in items}, key=str.lower)
+    return {"roots": [safe_rel(p) for p in current_media_roots()], "libraries": libraries, "items": items}
 
 
 @app.get("/api/status")
 def get_status() -> dict[str, Any]:
-    """Diagnostic snapshot for the UI's status panel: are the configured media
-    folders actually visible inside the container, and are Jellyfin/Emby
-    configured and reachable. Meant to answer "why is my library empty /
-    why doesn't it refresh" without needing to open a shell.
-    """
     return {
         "roots": roots_status(),
         "jellyfin": server_status("JELLYFIN_URL", "JELLYFIN_API_KEY"),
         "emby": server_status("EMBY_URL", "EMBY_API_KEY"),
+        "telegram": bool(TG_BOT_TOKEN and TG_CHAT_ID),
+        "auto_scan": {
+            "interval_hours": AUTO_SCAN_INTERVAL_HOURS,
+            "min_score": AUTO_MIN_SCORE,
+            "assets": AUTO_ASSETS,
+            **asdict(scan_state),
+        },
     }
+
+
+@app.get("/api/poster")
+def get_poster(item: str):
+    path = ensure_inside_roots(Path(item))
+    library = media_root_name(path)
+    if not library:
+        raise HTTPException(status_code=404, detail="not found")
+    ref = find_poster_ref(library, path.name)
+    if not ref:
+        raise HTTPException(status_code=404, detail="no poster")
+    url = ref["base"].rstrip("/") + f"/Items/{ref['id']}/Images/Primary?maxWidth=480&quality=90"
+    req = request.Request(url, method="GET")
+    req.add_header("X-Emby-Token", ref["token"])
+    try:
+        with request.urlopen(req, timeout=15) as resp:
+            body = resp.read()
+            ctype = resp.headers.get("Content-Type", "image/jpeg")
+    except Exception:
+        raise HTTPException(status_code=404, detail="fetch failed")
+    return Response(content=body, media_type=ctype, headers={"Cache-Control": "public, max-age=86400"})
 
 
 @app.post("/api/preview")
@@ -700,15 +975,7 @@ def search_youtube(req: SearchRequest) -> dict[str, Any]:
     if not query:
         raise HTTPException(status_code=400, detail="falta el término de búsqueda")
     limit = max(1, min(req.limit, 15))
-    cmd = [
-        sys.executable,
-        "-m",
-        "yt_dlp",
-        f"ytsearch{limit}:{query}",
-        "--dump-json",
-        "--no-playlist",
-        "--flat-playlist",
-    ]
+    cmd = [sys.executable, "-m", "yt_dlp", f"ytsearch{limit}:{query}", "--dump-json", "--no-playlist", "--flat-playlist"]
     proc = run(cmd)
     if proc.returncode != 0:
         raise HTTPException(status_code=400, detail=proc.stderr.strip() or "la búsqueda en YouTube falló")
@@ -734,77 +1001,18 @@ def search_youtube(req: SearchRequest) -> dict[str, Any]:
     return {"results": results}
 
 
-def _auto_search_one_query(query: str) -> list[dict[str, Any]]:
-    cmd = [
-        sys.executable,
-        "-m",
-        "yt_dlp",
-        "ytsearch5:" + query,
-        "--dump-json",
-        "--no-playlist",
-        "--flat-playlist",
-    ]
-    proc = run(cmd)
-    if proc.returncode != 0:
-        return []
-    videos = []
-    for line in proc.stdout.splitlines():
-        if line.strip():
-            videos.append(json.loads(line))
-    return videos
-
-
-def auto_search_candidates(destination: Path, limit: int = 8) -> tuple[str, int | None, list[dict[str, Any]]]:
-    name, year = parse_folder_name(destination.name)
-    anime = is_anime_library(media_root_name(destination))
-    queries = build_auto_queries(name, anime)
-
-    seen: set[str] = set()
-    candidates: list[dict[str, Any]] = []
-    with ThreadPoolExecutor(max_workers=len(queries)) as pool:
-        for query, videos in zip(queries, pool.map(_auto_search_one_query, queries)):
-            for video in videos:
-                video_id = video.get("id")
-                if not video_id or video_id in seen:
-                    continue
-                seen.add(video_id)
-                thumbnails = video.get("thumbnails") or []
-                thumbnail = (
-                    video.get("thumbnail")
-                    or (thumbnails[-1].get("url") if thumbnails else None)
-                    or f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
-                )
-                candidates.append(
-                    {
-                        "id": video_id,
-                        "title": video.get("title"),
-                        "uploader": video.get("uploader") or video.get("channel"),
-                        "duration": video.get("duration"),
-                        "thumbnail": thumbnail,
-                        "webpage_url": video.get("webpage_url") or video.get("url") or f"https://www.youtube.com/watch?v={video_id}",
-                        "embed_url": f"https://www.youtube.com/embed/{video_id}",
-                        "score": round(score_auto_candidate(name, year, video), 3),
-                        "query": query,
-                    }
-                )
-    candidates.sort(key=lambda c: c["score"], reverse=True)
-    return name, year, candidates[: max(1, min(limit, 15))]
-
-
-@app.post("/api/auto-search")
-def auto_search(req: AutoSearchRequest) -> dict[str, Any]:
-    dest = ensure_inside_roots(Path(req.destination))
+@app.post("/api/item/candidates")
+def item_candidates(item: str, req: ItemCandidatesRequest) -> dict[str, Any]:
+    dest = ensure_inside_roots(Path(item))
     name, year, results = auto_search_candidates(dest, req.limit)
     return {"name": name, "year": year, "results": results}
 
 
-def _enqueue(url: str, destination: str, assets: list[str], refresh: bool) -> Job:
-    job = Job(id=uuid.uuid4().hex[:12], url=url, destination=destination, assets=list(assets))
-    job.result["refresh"] = refresh
-    jobs[job.id] = job
-    job_queue.put(job.id)
-    emit_event({"type": "job", "job": asdict(job)})
-    return job
+@app.get("/api/item/review")
+def item_review(item: str) -> dict[str, Any]:
+    dest = ensure_inside_roots(Path(item))
+    state = item_state(safe_rel(dest))
+    return {"needs_review": bool(state.get("needs_review")), "candidates": state.get("candidates") or []}
 
 
 @app.post("/api/jobs")
@@ -816,69 +1024,9 @@ def create_job(req: JobRequest) -> dict[str, Any]:
     return {"job": asdict(job)}
 
 
-@app.post("/api/autopilot")
-def start_autopilot(req: AutopilotRequest) -> dict[str, Any]:
-    if not req.assets:
-        raise HTTPException(status_code=400, detail="select at least one asset")
-
-    if req.destination:
-        target = ensure_inside_roots(Path(req.destination))
-        items = [i for i in media_items() if i["path"] == safe_rel(target)]
-        scope = items[0]["name"] if items else target.name
-    elif req.library:
-        items = [i for i in media_items() if i["library"] == req.library]
-        scope = f"biblioteca {req.library}"
-    else:
-        raise HTTPException(status_code=400, detail="especifica library o destination")
-
-    if not items:
-        raise HTTPException(status_code=404, detail="no se encontraron destinos para ese ámbito")
-
-    pending = [i for i in items if needed_assets(i, req.assets, req.overwrite)]
-    already_done = len(items) - len(pending)
-    if not pending:
-        raise HTTPException(
-            status_code=400,
-            detail=f"los {len(items)} destinos de este ámbito ya tienen instalado lo seleccionado",
-        )
-
-    run = AutopilotRun(id=uuid.uuid4().hex[:12], scope=scope, total=len(pending))
-    autopilot_runs[run.id] = run
-    if already_done:
-        autopilot_log(run, f"{already_done} de {len(items)} ya tenían audio/video instalado — excluidos del recuento")
-    emit_event({"type": "autopilot", "run": asdict(run)})
-    thread = threading.Thread(target=autopilot_worker, args=(run.id, pending, req), daemon=True)
-    thread.start()
-    return {"run": asdict(run)}
-
-
-@app.get("/api/autopilot")
-def list_autopilot() -> dict[str, Any]:
-    return {"runs": [asdict(run) for run in sorted(autopilot_runs.values(), key=lambda r: r.created_at, reverse=True)]}
-
-
-@app.get("/api/autopilot/{run_id}")
-def get_autopilot(run_id: str) -> dict[str, Any]:
-    run = autopilot_runs.get(run_id)
-    if not run:
-        raise HTTPException(status_code=404, detail="run not found")
-    return {"run": asdict(run)}
-
-
-@app.post("/api/autopilot/{run_id}/cancel")
-def cancel_autopilot(run_id: str) -> dict[str, Any]:
-    run = autopilot_runs.get(run_id)
-    if not run:
-        raise HTTPException(status_code=404, detail="run not found")
-    if run.status != "running":
-        raise HTTPException(status_code=400, detail="el autopiloto ya ha terminado")
-    autopilot_cancelled.add(run_id)
-    return {"run": asdict(run)}
-
-
 @app.get("/api/jobs")
 def list_jobs() -> dict[str, Any]:
-    return {"jobs": [asdict(job) for job in sorted(jobs.values(), key=lambda j: j.created_at, reverse=True)]}
+    return {"jobs": [asdict(job) for job in sorted(jobs.values(), key=lambda j: j.created_at, reverse=True)][:200]}
 
 
 @app.get("/api/jobs/{job_id}")
@@ -917,9 +1065,22 @@ def retry_job(job_id: str) -> dict[str, Any]:
     return {"job": asdict(job)}
 
 
+@app.post("/api/scan/run")
+def trigger_scan() -> dict[str, Any]:
+    if scan_state.running:
+        raise HTTPException(status_code=409, detail="ya hay un escaneo en curso")
+    threading.Thread(target=run_auto_scan, kwargs={"trigger": "manual"}, daemon=True).start()
+    return {"started": True}
+
+
+@app.get("/api/scan/status")
+def scan_status() -> dict[str, Any]:
+    return {"scan": asdict(scan_state)}
+
+
 @app.get("/api/events")
 async def events() -> StreamingResponse:
-    q: asyncio.Queue[str] = asyncio.Queue(maxsize=100)
+    q: asyncio.Queue[str] = asyncio.Queue(maxsize=200)
     event_subscribers.append(q)
 
     async def stream():

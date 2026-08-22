@@ -1,6 +1,6 @@
 # 開幕 Kaimaku
 
-Instala automáticamente los openings/temas (`theme-music/song1.mp3` y `backdrops/intro.mp4`) de tus series y películas en Jellyfin/Emby, buscándolos en YouTube y priorizando fuentes oficiales en español/castellano/latino.
+Instala automáticamente los openings/temas (`theme-music/song1.mp3` y `backdrops/intro.mp4`) de tus series y películas en Jellyfin/Emby, buscándolos en YouTube y priorizando fuentes oficiales en español/castellano/latino. Corre en segundo plano: escanea tu biblioteca cada pocas horas, instala sola lo que encuentra con confianza suficiente, y te deja el resto marcado como "revisión" en un panel con pósters reales — sin que tengas que abrirlo cada vez.
 
 [![Docker Pulls](https://img.shields.io/docker/pulls/nemesbak/kaimaku?logo=docker&label=pulls)](https://hub.docker.com/r/nemesbak/kaimaku)
 [![Image size](https://img.shields.io/docker/image-size/nemesbak/kaimaku/latest?logo=docker&label=tama%C3%B1o)](https://hub.docker.com/r/nemesbak/kaimaku)
@@ -45,16 +45,27 @@ services:
       MEDIA_ROOTS: ""
       DATA_DIR: "/data"
       # Jellyfin/Emby son opcionales: sin API key, todo funciona igual pero se
-      # omite el refresco automático de biblioteca tras instalar (tendrás que
-      # esperar al escaneo periódico de Jellyfin/Emby, o refrescar tú a mano).
-      # host.docker.internal apunta al propio host Docker (sirve si Jellyfin/Emby
-      # corren en el mismo host o como contenedores normales, no en otra máquina
-      # de tu red — en ese caso pon su IP real). API key: Panel de control de
-      # Jellyfin/Emby → Avanzado → API Keys → Nueva clave.
+      # omiten los pósters y el refresco automático de biblioteca tras
+      # instalar. host.docker.internal apunta al propio host Docker (sirve si
+      # Jellyfin/Emby corren en el mismo host o como contenedores normales, no
+      # en otra máquina de tu red — en ese caso pon su IP real). API key:
+      # Panel de control de Jellyfin/Emby → Avanzado → API Keys → Nueva clave.
       JELLYFIN_URL: "http://host.docker.internal:8096"
       JELLYFIN_API_KEY: ""
       EMBY_URL: "http://host.docker.internal:8097"
       EMBY_API_KEY: ""
+      # Kaimaku escanea la biblioteca solo cada X horas: instala directamente
+      # lo que encuentre con confianza suficiente (AUTO_MIN_SCORE) y deja el
+      # resto marcado como "revisión" en la propia web para que elijas tú.
+      AUTO_SCAN_INTERVAL_HOURS: "12"
+      AUTO_MIN_SCORE: "0.75"
+      AUTO_ASSETS: "audio,video"
+      # Opcional: aviso por Telegram con el resumen de cada escaneo
+      # automático (solo si instaló algo, dejó algo a revisión o falló algo —
+      # nunca si no había nada que hacer). Vacío = desactivado.
+      TG_BOT_TOKEN: ""
+      TG_CHAT_ID: ""
+      TG_TOPIC_ID: ""
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -70,16 +81,16 @@ services:
       # tus carpetas anime/series/peliculas, es la correcta. Si te equivocas, la
       # propia app te avisará al abrirla (botón "⚙ Diagnóstico").
       - /mnt/user/datos/media:/media
-      # Carpeta pequeña para backups y descargas en curso. No hace falta tocarla.
+      # Carpeta pequeña para el estado (qué está instalado, qué queda a
+      # revisión), backups y descargas en curso. No hace falta tocarla.
       - ./data:/data
     restart: unless-stopped
-    # Job/autopilot state lives in memory only (simple, nothing to corrupt) —
-    # on shutdown the app waits up to 25s for an in-progress download to finish
-    # before exiting. Keep this above that so it isn't SIGKILLed mid-wait.
+    # Jobs en curso viven en memoria; en el apagado se espera hasta 25s a que
+    # termine una descarga activa antes de salir. Mantén esto por encima.
     stop_grace_period: 30s
 ```
 
-Lo único que **tienes** que cambiar es la línea marcada `<-- CAMBIA ESTA`, por la ruta real de tu biblioteca. Todo lo demás (`MEDIA_ROOTS`, el puerto, Jellyfin/Emby) ya viene con valores que funcionan tal cual — ajústalos solo si quieres algo distinto (refresco automático, limitar a ciertas carpetas, otro puerto).
+Lo único que **tienes** que cambiar es la línea marcada `<-- CAMBIA ESTA`, por la ruta real de tu biblioteca. Todo lo demás (`MEDIA_ROOTS`, el puerto, Jellyfin/Emby, el escaneo automático) ya viene con valores que funcionan tal cual — ajústalos solo si quieres algo distinto.
 
 <details>
 <summary>¿No sabes cuál es la ruta real de tu biblioteca?</summary>
@@ -109,7 +120,7 @@ docker compose up -d
 http://IP-DEL-SERVIDOR:8098
 ```
 
-Ya está: verás tus series y películas listadas solas, sin nada más que configurar.
+Verás tus series y películas como una parrilla de pósters (si tienes Jellyfin/Emby configurados, tira de sus imágenes reales). No hace falta que hagas nada más: en segundo plano, Kaimaku ya está escaneando la biblioteca y empezará a instalar temas solo. Si quieres forzarlo ya, pulsa **Escanear ahora** arriba.
 
 Si al abrirlo no ves ninguna serie o película, no te preocupes: pulsa el botón **⚙** de la esquina superior derecha — te dirá exactamente qué carpeta no ha encontrado y qué línea del `docker-compose.yml` revisar (ver [Diagnóstico integrado](#-diagnóstico-integrado) más abajo).
 
@@ -135,7 +146,7 @@ Kaimaku trae una plantilla lista para el **Add Container** de Unraid — rellena
    ```text
    https://raw.githubusercontent.com/nemesbak/kaimaku/main/unraid-template/kaimaku.xml
    ```
-3. El formulario se rellena solo (puerto `8098`, carpetas `/media` y `/data`, variables de Jellyfin/Emby). Cambia únicamente el campo **Media** por la ruta real de tu biblioteca (ej. `/mnt/user/datos/media`).
+3. El formulario se rellena solo (puerto `8098`, carpetas `/media` y `/data`, variables de Jellyfin/Emby, escaneo automático). Cambia únicamente el campo **Media** por la ruta real de tu biblioteca (ej. `/mnt/user/datos/media`).
 4. Pulsa **Apply**.
 
 > Nota: esto instala Kaimaku directamente desde su propia plantilla, sin necesidad de que aparezca en el buscador de Community Applications (eso requeriría enviarla y que la aprobasen en el repositorio de plantillas de la comunidad de Unraid — un trámite aparte y externo a este proyecto).
@@ -159,29 +170,30 @@ media/
 
 No hace falta crear `theme-music/` ni `backdrops/` a mano: Kaimaku los crea solos al instalar. Si ya existía un archivo con ese nombre, se guarda una copia de seguridad antes de sobrescribirlo (ver `data/backups/` dentro de la carpeta del proyecto).
 
+Recuerda activar la reproducción en cada cliente: en Jellyfin/Emby, **Ajustes → Pantalla → Bibliotecas → Reproducir temas/vídeos de fondo**. Cuando una serie tiene ambos, el vídeo tiene prioridad sobre el audio.
+
 ## Cómo funciona
 
-1. Eliges una serie o película de la lista (con filtro de biblioteca y de "solo lo que le falta").
-2. Kaimaku busca sola en YouTube y te deja el mejor candidato ya elegido, con su porcentaje de confianza y el preview (o un enlace directo "Ver en YouTube ↗" si el vídeo no admite reproducirse embebido — algunos canales oficiales lo bloquean).
-3. Si prefieres otro resultado, la lista de candidatos está justo debajo; o abre "Buscar otro / pegar un enlace" para buscar tú a mano o pegar tu propia URL.
-4. Pulsas **Instalar** y listo — se añade a la cola, que puedes ver en la pestaña "Cola" (con progreso en vivo, cancelar/reintentar).
+Kaimaku hace dos cosas a la vez, y no necesitas elegir entre ellas:
 
-¿Muchas series/películas a la vez? Debajo del botón Instalar hay una opción secundaria "¿Aplicarlo a toda la biblioteca de una vez?" — Kaimaku busca, puntúa e instala cada ítem de esa biblioteca sin que tengas que revisar uno a uno, y solo si el candidato supera el umbral de confianza mínima que fijes (si no llega, lo omite en vez de instalar algo dudoso).
+**En segundo plano (lo que hace que no tengas que tocar nada):** cada `AUTO_SCAN_INTERVAL_HOURS` horas (12 por defecto), Kaimaku recorre toda tu biblioteca. Para cada serie o película sin tema/intro, busca en YouTube, puntúa los resultados (idioma, canal oficial, coincidencia de título, duración...) y:
+- si el mejor candidato supera el umbral de confianza (`AUTO_MIN_SCORE`, 75% por defecto) lo instala solo, hace copia de seguridad de lo anterior si existía, y refresca la biblioteca de Jellyfin/Emby afectada;
+- si no hay ninguno suficientemente fiable, lo deja marcado como **revisión** — visible con un icono 👀 en su póster — sin instalar nada dudoso.
 
-En ambos casos: se hace copia de seguridad del archivo anterior antes de sobrescribirlo, y se refresca solo la biblioteca de Jellyfin/Emby afectada (si has puesto las API keys).
+Si has puesto un bot de Telegram, recibes un resumen al final de cada pasada (solo cuando instaló algo, dejó algo a revisión o falló algo — nunca un aviso vacío).
+
+**En el panel web (para cuando quieras intervenir tú):** la portada es una parrilla de pósters de toda tu biblioteca, con filtros por biblioteca y por estado (Todo / Revisión / Incompletos / Completos) y buscador. Al abrir cualquier serie o película ves lo que tiene instalado ahora mismo y la lista de candidatos que encontró Kaimaku (con miniatura, canal, duración y barra de confianza) — eliges uno, o abres "Buscar otro / pegar un enlace" para buscar tú a mano o pegar tu propia URL, y pulsas **Instalar**. El botón **Escanear ahora** de la cabecera lanza el mismo escaneo automático en el momento, sin esperar al intervalo.
+
+Todo el progreso (descargas en curso, resultado del último escaneo) se ve en vivo en el panel **🕘 Actividad**.
 
 ## 🩺 Diagnóstico integrado
 
 El botón **⚙** de la cabecera abre un panel que comprueba en vivo:
 
 - **Carpetas de biblioteca**: por cada subcarpeta detectada dentro de `/media` (o cada entrada de `MEDIA_ROOTS`, si lo has rellenado a mano), si existe dentro del contenedor y cuántos destinos ha encontrado en ella. Si no existe, es casi siempre porque la ruta de la izquierda en el volumen (`- /tu/ruta/real:/media`) no es correcta.
-- **Jellyfin / Emby**: si están configurados, si se puede conectar con la URL indicada, y si tienen API key puesta. El indicador te dice la gravedad:
-  - punto relleno: todo bien, refrescará solo tras cada instalación.
-  - punto vacío: conecta pero falta la API key.
-  - punto en rojo/bermellón: no consigue conectar (revisa la URL) o falta la carpeta.
-  - punto tenue: no configurado — no es un error, Jellyfin/Emby son opcionales.
-
-Además, si Kaimaku detecta al abrir la web que alguna carpeta no existe o que no ha encontrado ninguna serie/película, muestra un aviso arriba de la página automáticamente, sin que tengas que ir a buscarlo.
+- **Jellyfin / Emby**: si están configurados, si se puede conectar con la URL indicada, y si tienen API key puesta.
+- **Telegram**: si hay bot configurado para los avisos del escaneo automático.
+- **Escaneo automático**: cada cuántas horas corre, el umbral de confianza, qué instala (audio/video), y cuándo fue el último.
 
 ## Actualizar
 
@@ -208,6 +220,11 @@ Abre el diagnóstico (botón ⚙): si alguna carpeta aparece en rojo/bermellón,
 **Aparecen carpetas que no son series/películas** (p. ej. `_backups`, `_tools`...)
 Kaimaku ignora automáticamente cualquier subcarpeta que empiece por `.` o `_`. Si quieres excluir otras, usa `MEDIA_ROOTS` para listar solo las carpetas que sí quieres tratar como biblioteca.
 
+### 🖼️ Pósters
+
+**No veo pósters, solo las iniciales del título**
+Necesitas `JELLYFIN_URL`/`EMBY_URL` + su API key puestos y alcanzables desde el contenedor (mismo requisito que el refresco de biblioteca, ver abajo). Si el título de la carpeta y el nombre del ítem en Jellyfin/Emby no coinciden en absoluto, tampoco lo encontrará — el resto de la app funciona igual, es solo estético.
+
 ### 🎬 Jellyfin / Emby
 
 **¿Hace falta configurar los dos, Jellyfin y Emby?**
@@ -229,40 +246,7 @@ Algunos canales oficiales (Crunchyroll, Aniplex, discográficas...) bloquean la 
 ### 🧹 Mantenimiento
 
 **Los logs del contenedor crecen sin límite**
-El `docker-compose.yml` no fija rotación de logs a propósito, para no meter ruido en un archivo pensado para ser simple. Si te importa (uso 24/7 a largo plazo), configúralo una vez para todos tus contenedores en `/etc/docker/daemon.json` en vez de por servicio:
-
-```json
-{
-  "log-driver": "json-file",
-  "log-opts": { "max-size": "10m", "max-file": "3" }
-}
-```
-
-Reinicia Docker (`sudo systemctl restart docker`) tras guardarlo.
-
-## Uso avanzado: CLI por lotes
-
-Además de la app web, el repo incluye `kaimaku_cli.py`: un CLI para procesar una biblioteca entera de una vez (scan → search → stage → install → refresh), pensado para automatizar vía cron/user scripts en vez de usar la interfaz web. Comparte la misma lógica de puntuación que la app web.
-
-Requisitos (a diferencia de la app web, aquí sí hacen falta en el host): Python 3.10+, [`yt-dlp`](https://github.com/yt-dlp/yt-dlp), `ffmpeg` (si vas a convertir audio/vídeo).
-
-```bash
-pip install yt-dlp
-python kaimaku_cli.py init          # crea config.json desde config.example.json
-```
-
-Rellena las API keys de Jellyfin/Emby en `config.json` (o usa `filesystem_roots` para escanear carpetas sin API). Flujo completo:
-
-```bash
-python kaimaku_cli.py scan                                                  # 1. lista la biblioteca
-python kaimaku_cli.py search --limit 10                                     # 2. busca candidatos en YouTube (no descarga)
-python kaimaku_cli.py report --input state/candidates.json                  # 3. revisa el resumen en Markdown
-python kaimaku_cli.py stage  --input state/candidates.json --output staged  # 4. descarga a una carpeta local
-python install_staged_remote.py --stage-root staged --dry-run               # 5. revisa qué se instalaría...
-python install_staged_remote.py --stage-root staged --backup-existing       # ...e instálalo
-```
-
-`kaimaku_cli.py refresh` refresca Jellyfin/Emby a partir del listado de cambios que genera `download --changed`; el flujo `stage` de arriba no lo produce, así que tras instalar refresca las bibliotecas afectadas a mano (o usa la interfaz web, que sí refresca automáticamente cada instalación).
+El `docker-compose.yml` no fija rotación de logs a propósito, para no meter ruido en un archivo pensado para ser simple. Si te importa (uso 24/7 a largo plazo), configura rotación en el propio Docker (`/etc/docker/daemon.json` → `log-driver`/`log-opts`) o en Unraid desde la pestaña Docker del contenedor.
 
 ## Licencia
 

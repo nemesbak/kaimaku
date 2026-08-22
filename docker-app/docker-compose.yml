@@ -13,16 +13,27 @@ services:
       MEDIA_ROOTS: ""
       DATA_DIR: "/data"
       # Jellyfin/Emby son opcionales: sin API key, todo funciona igual pero se
-      # omite el refresco automático de biblioteca tras instalar (tendrás que
-      # esperar al escaneo periódico de Jellyfin/Emby, o refrescar tú a mano).
-      # host.docker.internal apunta al propio host Docker (sirve si Jellyfin/Emby
-      # corren en el mismo host o como contenedores normales, no en otra máquina
-      # de tu red — en ese caso pon su IP real). API key: Panel de control de
-      # Jellyfin/Emby → Avanzado → API Keys → Nueva clave.
+      # omiten los pósters y el refresco automático de biblioteca tras
+      # instalar. host.docker.internal apunta al propio host Docker (sirve si
+      # Jellyfin/Emby corren en el mismo host o como contenedores normales, no
+      # en otra máquina de tu red — en ese caso pon su IP real). API key:
+      # Panel de control de Jellyfin/Emby → Avanzado → API Keys → Nueva clave.
       JELLYFIN_URL: "http://host.docker.internal:8096"
       JELLYFIN_API_KEY: ""
       EMBY_URL: "http://host.docker.internal:8097"
       EMBY_API_KEY: ""
+      # Kaimaku escanea la biblioteca solo cada X horas: instala directamente
+      # lo que encuentre con confianza suficiente (AUTO_MIN_SCORE) y deja el
+      # resto marcado como "revisión" en la propia web para que elijas tú.
+      AUTO_SCAN_INTERVAL_HOURS: "12"
+      AUTO_MIN_SCORE: "0.75"
+      AUTO_ASSETS: "audio,video"
+      # Opcional: aviso por Telegram con el resumen de cada escaneo
+      # automático (solo si instaló algo, dejó algo a revisión o falló algo —
+      # nunca si no había nada que hacer). Vacío = desactivado.
+      TG_BOT_TOKEN: ""
+      TG_CHAT_ID: ""
+      TG_TOPIC_ID: ""
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -38,10 +49,10 @@ services:
       # tus carpetas anime/series/peliculas, es la correcta. Si te equivocas, la
       # propia app te avisará al abrirla (botón "⚙ Diagnóstico").
       - /mnt/user/datos/media:/media
-      # Carpeta pequeña para backups y descargas en curso. No hace falta tocarla.
+      # Carpeta pequeña para el estado (qué está instalado, qué queda a
+      # revisión), backups y descargas en curso. No hace falta tocarla.
       - ./data:/data
     restart: unless-stopped
-    # Job/autopilot state lives in memory only (simple, nothing to corrupt) —
-    # on shutdown the app waits up to 25s for an in-progress download to finish
-    # before exiting. Keep this above that so it isn't SIGKILLed mid-wait.
+    # Jobs en curso viven en memoria; en el apagado se espera hasta 25s a que
+    # termine una descarga activa antes de salir. Mantén esto por encima.
     stop_grace_period: 30s

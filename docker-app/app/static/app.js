@@ -1,688 +1,533 @@
+"use strict";
+
 const state = {
   items: [],
-  view: "install", // "install" | "queue"
-  step: 1, // 1 = elegir destino, 2 = actuar sobre el destino elegido
-  selectedDestination: "",
-  libraryFilter: "",
-  onlyMissing: false,
-  preview: null,
+  libraries: [],
+  filterLibrary: "all",
+  filterStatus: "all",
+  search: "",
+  currentItem: null,
+  currentCandidates: [],
+  selectedCandidateUrl: null,
   jobs: [],
-  searchResults: [],
-  selectedResultId: "",
-  expandedJobs: new Set(),
-  autopilotRun: null,
-  autopilotExpanded: false,
-  status: null,
+  scan: {},
 };
 
-const $ = (id) => document.getElementById(id);
+const el = (id) => document.getElementById(id);
+const escapeHtml = (s) =>
+  String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
-function fmtDuration(seconds) {
-  if (!seconds) return "duración desconocida";
-  const m = Math.floor(seconds / 60);
-  const s = String(seconds % 60).padStart(2, "0");
-  return `${m}:${s}`;
+function fmtDuration(sec) {
+  if (!sec && sec !== 0) return "";
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-function setMessage(text, kind = "", targetId = "formMsg") {
-  const el = $(targetId);
-  el.textContent = text;
-  el.className = `message ${kind}`;
+function fmtWhen(iso) {
+  if (!iso) return "";
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString("es-ES", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return iso;
+  }
 }
 
-async function api(path, options = {}) {
+async function api(path, opts) {
   const res = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
+    headers: opts && opts.body ? { "Content-Type": "application/json" } : undefined,
+    ...opts,
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.detail || "La petición falló");
-  return data;
-}
-
-function findSelectedItem() {
-  return state.items.find((i) => i.path === state.selectedDestination) || null;
-}
-
-function renderLibraryTabs() {
-  const box = $("libraryTabs");
-  const libraries = [...new Set(state.items.map((item) => item.library))].sort();
-  box.innerHTML = "";
-
-  const allTab = document.createElement("button");
-  allTab.type = "button";
-  allTab.className = `libTab ${state.libraryFilter === "" ? "selected" : ""}`;
-  allTab.textContent = `Todas (${state.items.length})`;
-  allTab.addEventListener("click", () => {
-    state.libraryFilter = "";
-    renderLibraryTabs();
-    renderItems();
-  });
-  box.appendChild(allTab);
-
-  for (const lib of libraries) {
-    const count = state.items.filter((item) => item.library === lib).length;
-    const tab = document.createElement("button");
-    tab.type = "button";
-    tab.className = `libTab ${state.libraryFilter === lib ? "selected" : ""}`;
-    tab.textContent = `${lib} (${count})`;
-    tab.addEventListener("click", () => {
-      state.libraryFilter = lib;
-      renderLibraryTabs();
-      renderItems();
-    });
-    box.appendChild(tab);
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = await res.json();
+      detail = body.detail || detail;
+    } catch {}
+    throw new Error(detail);
   }
+  const ctype = res.headers.get("content-type") || "";
+  return ctype.includes("application/json") ? res.json() : null;
 }
 
-function matchesMissing(item) {
-  return !state.onlyMissing || !item.has_audio || !item.has_video;
+function posterUrl(item) {
+  return `/api/poster?item=${encodeURIComponent(item.path)}`;
 }
 
-function renderItems() {
-  const filter = $("destinationFilter").value.toLowerCase();
-  const list = $("destinations");
-  const items = state.items.filter(
-    (item) =>
-      (!state.libraryFilter || item.library === state.libraryFilter) &&
-      matchesMissing(item) &&
-      (item.name.toLowerCase().includes(filter) || item.path.toLowerCase().includes(filter))
-  );
-  $("itemCount").textContent = `(${items.length}/${state.items.length})`;
-  list.innerHTML = "";
-
-  if (!items.length) {
-    const message = state.items.length
-      ? "Sin resultados con este filtro. Prueba a cambiar la búsqueda o la pestaña de biblioteca."
-      : 'No se ha encontrado ninguna serie o película. Pulsa "⚙ Diagnóstico" arriba para ver por qué.';
-    list.innerHTML = `<div class="emptyState">${message}</div>`;
-    return;
-  }
-
-  for (const item of items.slice(0, 120)) {
-    const row = document.createElement("button");
-    row.type = "button";
-    row.className = "dest";
-    row.title = item.path;
-    row.innerHTML = `
-      <span class="destKind">${item.kind === "movie" ? "映" : "系"}</span>
-      <span class="destName">
-        <strong>${item.name}</strong>
-        <span>${item.library}</span>
-      </span>
-      <span class="badges">
-        <span class="badge ${item.has_audio ? "ok" : ""}">audio</span>
-        <span class="badge ${item.has_video ? "ok" : ""}">video</span>
-      </span>
-    `;
-    row.addEventListener("click", () => selectDestination(item));
-    list.appendChild(row);
-  }
+function initials(name) {
+  return (name || "?")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0].toUpperCase())
+    .join("");
 }
 
-function renderActHeader() {
-  const item = findSelectedItem();
-  if (!item) return;
-  $("actDestKind").textContent = item.kind === "movie" ? "映" : "系";
-  $("actDestName").textContent = item.name;
-  $("actDestLib").textContent = item.library;
-  $("actDestBadges").innerHTML = `
-    <span class="badge ${item.has_audio ? "ok" : ""}">audio</span>
-    <span class="badge ${item.has_video ? "ok" : ""}">video</span>
-  `;
-  $("autoScopeLibraryName").textContent = item.library;
+function itemStatus(item) {
+  if (item.has_audio && item.has_video) return "done";
+  if (item.needs_review) return "review";
+  return "missing";
 }
 
-function renderStep() {
-  $("pickStep").hidden = state.step !== 1;
-  $("actStep").hidden = state.step !== 2;
-}
+// ---------------------------------------------------------------------------
+// Grid
+// ---------------------------------------------------------------------------
 
-function selectDestination(item) {
-  state.selectedDestination = item.path;
-  state.step = 2;
-  state.preview = null;
-  state.searchResults = [];
-  state.selectedResultId = "";
-  renderActHeader();
-  renderPreview();
-  renderSearchResults();
-  renderStep();
-  autoSearch();
-}
-
-function backToList() {
-  state.step = 1;
-  renderStep();
-}
-
-function switchView(view) {
-  state.view = view;
-  $("viewInstall").hidden = view !== "install";
-  $("viewQueue").hidden = view !== "queue";
-  $("viewInstallBtn").classList.toggle("selected", view === "install");
-  $("viewQueueBtn").classList.toggle("selected", view === "queue");
-}
-
-async function loadItems() {
-  const data = await api("/api/items");
-  state.items = data.items;
-  renderLibraryTabs();
-  renderItems();
-  if (state.step === 2 && findSelectedItem()) renderActHeader();
-}
-
-function serverStatusLine(label, info) {
-  let dot = "bad";
-  let text = "";
-  if (!info.configured) {
-    dot = "muted";
-    text = "no configurado (opcional — el refresco automático quedará desactivado)";
-  } else if (!info.reachable) {
-    dot = "bad";
-    text = `no se pudo conectar a ${info.url} — revisa la URL en docker-compose.yml y que sea accesible desde el contenedor`;
-  } else if (!info.has_key) {
-    dot = "warn";
-    text = "responde, pero falta la API key — rellénala en docker-compose.yml para poder refrescar";
-  } else {
-    dot = "ok";
-    text = `conectado correctamente (${info.url})`;
-  }
-  return `<div class="statusRow"><span class="statusDot ${dot}"></span><strong>${label}</strong><span>${text}</span></div>`;
-}
-
-function renderStatusBanner() {
-  const banner = $("statusBanner");
-  const status = state.status;
-  if (!status) {
-    banner.hidden = true;
-    return;
-  }
-  const missing = status.roots.filter((r) => !r.exists);
-  const totalItems = status.roots.reduce((sum, r) => sum + r.items, 0);
-
-  if (missing.length) {
-    banner.hidden = false;
-    banner.className = "statusBanner bad";
-    banner.innerHTML = `⚠ No se encontró la carpeta <code>${missing.map((r) => r.path).join("</code>, <code>")}</code> dentro del contenedor. Revisa la línea del volumen en <code>docker-compose.yml</code>: la parte de la izquierda (antes de <code>:/media</code>) debe ser la ruta REAL en tu servidor. <button type="button" id="bannerStatusBtn" class="linkBtn">Ver diagnóstico completo</button>`;
-  } else if (totalItems === 0) {
-    banner.hidden = false;
-    banner.className = "statusBanner warn";
-    banner.innerHTML = `Las carpetas configuradas existen pero están vacías: no se ha encontrado ninguna serie o película dentro. Comprueba que <code>MEDIA_ROOTS</code> apunta a las subcarpetas correctas. <button type="button" id="bannerStatusBtn" class="linkBtn">Ver diagnóstico completo</button>`;
-  } else {
-    banner.hidden = true;
-    return;
-  }
-  $("bannerStatusBtn").addEventListener("click", openStatusModal);
-}
-
-function renderStatusModal() {
-  const body = $("statusModalBody");
-  const status = state.status;
-  if (!status) {
-    body.innerHTML = `<p class="hint">Cargando...</p>`;
-    return;
-  }
-  const rootsHtml = status.roots
-    .map((r) => {
-      const dot = r.exists ? (r.items > 0 ? "ok" : "warn") : "bad";
-      const text = r.exists
-        ? `${r.items} destino(s) encontrados dentro de <code>${r.path}</code>`
-        : `no existe dentro del contenedor — revisa el volumen en docker-compose.yml`;
-      return `<div class="statusRow"><span class="statusDot ${dot}"></span><strong>${r.name}</strong><span>${text}</span></div>`;
+function renderLibraryChips() {
+  const wrap = el("libraryChips");
+  const chips = ["all", ...state.libraries]
+    .map((lib) => {
+      const label = lib === "all" ? "Todas" : lib;
+      const selected = state.filterLibrary === lib ? "selected" : "";
+      return `<button class="chip ${selected}" data-lib="${escapeHtml(lib)}" type="button">${escapeHtml(label)}</button>`;
     })
     .join("");
-  body.innerHTML = `
-    <p class="statusGroupTitle">Carpetas de biblioteca (MEDIA_ROOTS)</p>
-    ${rootsHtml || '<p class="hint">No hay ninguna carpeta configurada.</p>'}
-    <p class="statusGroupTitle">Servidores multimedia</p>
-    ${serverStatusLine("Jellyfin", status.jellyfin)}
-    ${serverStatusLine("Emby", status.emby)}
-  `;
-}
-
-async function loadStatus() {
-  state.status = await api("/api/status");
-  renderStatusBanner();
-  renderStatusModal();
-}
-
-function openStatusModal() {
-  $("statusModal").hidden = false;
-  loadStatus().catch(() => {});
-}
-
-function closeStatusModal() {
-  $("statusModal").hidden = true;
-}
-
-function renderPreview() {
-  const box = $("preview");
-  const link = $("previewLink");
-  if (!state.preview) {
-    box.className = "preview empty";
-    box.innerHTML = `<div class="emptyState">Buscando…</div>`;
-    link.hidden = true;
-    return;
-  }
-  box.className = "preview";
-  const frame = state.preview.embed_url
-    ? `<iframe class="previewFrame" src="${state.preview.embed_url}" allowfullscreen></iframe>`
-    : `<img class="previewFrame" src="${state.preview.thumbnail || ""}" alt="">`;
-  box.innerHTML = `
-    ${frame}
-    <div class="previewMeta">
-      <strong>${state.preview.title || "Sin titulo"}</strong>
-      <span>${state.preview.uploader || "canal desconocido"} · ${fmtDuration(state.preview.duration)}</span>
-    </div>
-  `;
-  const webpageUrl = state.preview.webpage_url || state.preview.embed_url;
-  if (webpageUrl) {
-    $("previewLinkAnchor").href = webpageUrl;
-    link.hidden = false;
-  } else {
-    link.hidden = true;
-  }
-}
-
-async function previewUrl() {
-  const url = $("youtubeUrl").value.trim();
-  if (!url) return;
-  $("previewBtn").disabled = true;
-  setMessage("Leyendo metadata de YouTube...");
-  try {
-    state.preview = await api("/api/preview", {
-      method: "POST",
-      body: JSON.stringify({ url }),
+  wrap.innerHTML = chips;
+  wrap.querySelectorAll("[data-lib]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.filterLibrary = btn.dataset.lib;
+      renderLibraryChips();
+      renderGrid();
     });
-    renderPreview();
-    setMessage("Preview lista, ya puedes añadirlo a la cola.", "success");
-  } catch (err) {
-    setMessage(`No se pudo previsualizar: ${err.message}`, "error");
-  } finally {
-    $("previewBtn").disabled = false;
-  }
+  });
 }
 
-function renderSearchResults() {
-  const box = $("searchResults");
-  if (!state.searchResults.length) {
-    box.innerHTML = "";
-    box.className = "searchResults";
-    return;
-  }
-  box.className = "searchResults hasResults";
-  box.innerHTML = "";
-  for (const item of state.searchResults) {
-    const card = document.createElement("button");
-    card.type = "button";
-    card.className = `searchResult ${item.id === state.selectedResultId ? "selected" : ""}`;
-    card.innerHTML = `
-      <img src="${item.thumbnail || ""}" alt="" loading="lazy" />
-      ${item.score != null ? `<span class="scoreBadge">${Math.round(item.score * 100)}%</span>` : ""}
-      ${item.id === state.selectedResultId ? `<span class="pickedBadge">✓ elegido</span>` : ""}
-      <span class="searchResultMeta">
-        <strong>${item.title || "Sin título"}</strong>
-        <span>${item.uploader || "canal desconocido"} · ${fmtDuration(item.duration)}</span>
+function filteredItems() {
+  const q = state.search.trim().toLowerCase();
+  return state.items.filter((item) => {
+    if (state.filterLibrary !== "all" && item.library !== state.filterLibrary) return false;
+    const status = itemStatus(item);
+    if (state.filterStatus === "review" && status !== "review") return false;
+    if (state.filterStatus === "missing" && status === "done") return false;
+    if (state.filterStatus === "done" && status !== "done") return false;
+    if (q && !item.name.toLowerCase().includes(q)) return false;
+    return true;
+  });
+}
+
+function cardHtml(item) {
+  const status = itemStatus(item);
+  const badge =
+    status === "done"
+      ? '<span class="statusFlag done" title="Completo">✓</span>'
+      : status === "review"
+      ? '<span class="statusFlag review" title="Pendiente de revisión">👀</span>'
+      : '<span class="statusFlag missing" title="Incompleto">–</span>';
+  return `
+    <button class="card" data-id="${escapeHtml(item.id)}" type="button">
+      <span class="posterBox">
+        <img class="posterImg" src="${posterUrl(item)}" alt="" loading="lazy"
+             onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
+        <span class="posterFallback">${escapeHtml(initials(item.name))}</span>
+        ${badge}
       </span>
-    `;
-    card.addEventListener("click", () => selectSearchResult(item));
-    box.appendChild(card);
+      <span class="cardTitle">${escapeHtml(item.name)}</span>
+      <span class="cardLib">${escapeHtml(item.library)}</span>
+    </button>`;
+}
+
+function renderGrid() {
+  const items = filteredItems();
+  el("emptyState").hidden = items.length > 0;
+  el("grid").innerHTML = items.map(cardHtml).join("");
+  el("grid").querySelectorAll(".card").forEach((card) => {
+    card.addEventListener("click", () => openDrawer(card.dataset.id));
+  });
+  updateCounts();
+}
+
+function updateCounts() {
+  const all = state.items.filter((i) => state.filterLibrary === "all" || i.library === state.filterLibrary);
+  const review = all.filter((i) => itemStatus(i) === "review").length;
+  const missing = all.filter((i) => itemStatus(i) !== "done").length;
+  el("countReview").textContent = review ? `(${review})` : "";
+  el("countMissing").textContent = missing ? `(${missing})` : "";
+}
+
+// ---------------------------------------------------------------------------
+// Drawer (item detail: current install + candidates + manual search)
+// ---------------------------------------------------------------------------
+
+function currentInstalledHtml(item) {
+  const rows = [];
+  if (item.has_audio) {
+    const src = item.audio_source;
+    rows.push(
+      `<div class="installedRow"><span class="installedIcon">🎵</span><div><strong>Audio</strong>${
+        src ? `<span class="installedMeta">${escapeHtml(src.title || "")}</span>` : ""
+      }</div></div>`
+    );
   }
+  if (item.has_video) {
+    const src = item.video_source;
+    rows.push(
+      `<div class="installedRow"><span class="installedIcon">🎬</span><div><strong>Vídeo</strong>${
+        src ? `<span class="installedMeta">${escapeHtml(src.title || "")}</span>` : ""
+      }</div></div>`
+    );
+  }
+  if (!rows.length) return '<p class="hint">Nada instalado todavía.</p>';
+  return rows.join("");
 }
 
-function selectSearchResult(item) {
-  $("youtubeUrl").value = item.webpage_url;
-  state.preview = item;
-  state.selectedResultId = item.id;
-  renderPreview();
-  renderSearchResults();
-  setMessage("Preview lista, ya puedes añadirlo a la cola (o elige otro resultado de la lista).", "success");
+function candidateHtml(c, idx) {
+  const pct = Math.round((c.score || 0) * 100);
+  const barClass = pct >= 75 ? "high" : pct >= 45 ? "mid" : "low";
+  return `
+    <label class="candidate">
+      <input type="radio" name="candidate" value="${escapeHtml(c.webpage_url)}" data-idx="${idx}" ${idx === 0 ? "checked" : ""} />
+      <img class="candidateThumb" src="${escapeHtml(c.thumbnail || "")}" alt="" loading="lazy" />
+      <span class="candidateBody">
+        <span class="candidateTitle">${escapeHtml(c.title || "(sin título)")}</span>
+        <span class="candidateMeta">${escapeHtml(c.uploader || "")} · ${fmtDuration(c.duration)}</span>
+        <span class="scoreBar"><span class="scoreFill ${barClass}" style="width:${pct}%"></span></span>
+      </span>
+      <a href="${escapeHtml(c.webpage_url)}" target="_blank" rel="noopener" class="ytLink" title="Ver en YouTube">↗</a>
+    </label>`;
 }
 
-async function searchYoutube() {
-  const query = $("searchQuery").value.trim();
-  if (!query) return;
-  $("searchBtn").disabled = true;
-  setMessage("Buscando en YouTube...");
+function renderCandidates(list) {
+  state.currentCandidates = list;
+  const wrap = el("candidatesList");
+  if (!list.length) {
+    wrap.innerHTML = '<p class="hint">Sin candidatos. Prueba a buscar manualmente abajo.</p>';
+    el("installBtn").disabled = true;
+    return;
+  }
+  wrap.innerHTML = list.map(candidateHtml).join("");
+  wrap.querySelectorAll('input[name="candidate"]').forEach((r) =>
+    r.addEventListener("change", () => {
+      state.selectedCandidateUrl = r.value;
+      el("installBtn").disabled = false;
+    })
+  );
+  state.selectedCandidateUrl = list[0].webpage_url;
+  el("installBtn").disabled = false;
+}
+
+async function openDrawer(itemId) {
+  const item = state.items.find((i) => i.id === itemId);
+  if (!item) return;
+  state.currentItem = item;
+  state.selectedCandidateUrl = null;
+
+  el("drawerTitle").textContent = item.name;
+  el("drawerLib").textContent = item.library;
+  el("drawerKind").textContent = item.kind === "movie" ? "Película" : "Serie";
+  el("drawerPoster").innerHTML = `<img src="${posterUrl(item)}" alt="" onerror="this.remove()" />`;
+  el("drawerBadges").innerHTML = [
+    item.has_audio ? '<span class="badgePill ok">🎵 audio</span>' : '<span class="badgePill">🎵 falta</span>',
+    item.has_video ? '<span class="badgePill ok">🎬 vídeo</span>' : '<span class="badgePill">🎬 falta</span>',
+  ].join("");
+  el("installedCurrent").innerHTML = currentInstalledHtml(item);
+  el("assetAudio").checked = !item.has_audio;
+  el("assetVideo").checked = !item.has_video;
+  el("manualPreview").innerHTML = "";
+  el("manualUrl").value = "";
+  el("manualQuery").value = "";
+  el("drawerMsg").textContent = "";
+  el("candidatesList").innerHTML = '<p class="hint">Buscando…</p>';
+  el("candidatesHint").textContent = item.needs_review
+    ? "Kaimaku ya buscó y no encontró nada suficientemente fiable — revisa y elige a mano."
+    : "Kaimaku ya ha buscado y marcado el mejor candidato.";
+  el("installBtn").disabled = true;
+
+  el("drawerOverlay").hidden = false;
+
   try {
-    const data = await api("/api/search", {
-      method: "POST",
-      body: JSON.stringify({ query }),
-    });
-    state.searchResults = data.results;
-    state.selectedResultId = "";
-    renderSearchResults();
-    if (data.results.length) {
-      selectSearchResult(data.results[0]);
-    } else {
-      setMessage("Sin resultados, prueba otra búsqueda.");
+    const reviewData = await api(`/api/item/review?item=${encodeURIComponent(item.path)}`);
+    if (reviewData.candidates && reviewData.candidates.length) {
+      renderCandidates(reviewData.candidates);
+      return;
     }
-  } catch (err) {
-    setMessage(`La búsqueda falló: ${err.message}`, "error");
-  } finally {
-    $("searchBtn").disabled = false;
-  }
+  } catch {}
+  await searchCandidates();
 }
 
-async function autoSearch() {
-  if (!state.selectedDestination) return;
-  $("researchBtn").disabled = true;
-  setMessage("Buscando automáticamente (opening, español/castellano, oficial)...");
+async function searchCandidates() {
+  if (!state.currentItem) return;
+  el("candidatesList").innerHTML = '<p class="hint">Buscando…</p>';
   try {
-    const data = await api("/api/auto-search", {
+    const data = await api(`/api/item/candidates?item=${encodeURIComponent(state.currentItem.path)}`, {
       method: "POST",
-      body: JSON.stringify({ destination: state.selectedDestination }),
+      body: JSON.stringify({ limit: 8 }),
     });
-    state.searchResults = data.results;
-    state.selectedResultId = "";
-    renderSearchResults();
-    if (data.results.length) {
-      selectSearchResult(data.results[0]);
-      setMessage(`Mejor candidato para "${data.name}" ya seleccionado (${Math.round(data.results[0].score * 100)}%). Revisa el preview o elige otro de la lista.`, "success");
-    } else {
-      setMessage(`Sin candidatos para "${data.name}". Búscalo tú abajo o pega un enlace.`);
-    }
-  } catch (err) {
-    setMessage(`La autobúsqueda falló: ${err.message}`, "error");
-  } finally {
-    $("researchBtn").disabled = false;
+    renderCandidates(data.results || []);
+  } catch (exc) {
+    el("candidatesList").innerHTML = `<p class="hint">Error buscando: ${escapeHtml(exc.message)}</p>`;
   }
 }
 
-async function enqueue() {
-  const url = $("youtubeUrl").value.trim();
+function closeDrawer() {
+  el("drawerOverlay").hidden = true;
+  state.currentItem = null;
+}
+
+async function installSelected() {
+  if (!state.currentItem || !state.selectedCandidateUrl) return;
   const assets = [];
-  if ($("assetAudio").checked) assets.push("audio");
-  if ($("assetVideo").checked) assets.push("video");
-  if (!url) {
-    setMessage("Antes de instalar, elige un resultado de la lista o pega un enlace.", "error");
-    return;
-  }
-  if (!state.selectedDestination) {
-    setMessage("Elige a qué serie o película va este contenido.", "error");
-    return;
-  }
+  if (el("assetAudio").checked) assets.push("audio");
+  if (el("assetVideo").checked) assets.push("video");
   if (!assets.length) {
-    setMessage("Marca al menos audio o video.", "error");
+    el("drawerMsg").textContent = "Elige al menos audio o vídeo.";
     return;
   }
+  el("installBtn").disabled = true;
+  el("drawerMsg").textContent = "Instalando…";
   try {
     await api("/api/jobs", {
       method: "POST",
-      body: JSON.stringify({
-        url,
-        destination: state.selectedDestination,
-        assets,
-        refresh: $("refreshLibs").checked,
-      }),
+      body: JSON.stringify({ url: state.selectedCandidateUrl, destination: state.currentItem.path, assets, refresh: true }),
     });
-    setMessage("Añadido a la cola.", "success");
-    await loadJobs();
-    switchView("queue");
-  } catch (err) {
-    setMessage(`No se pudo encolar: ${err.message}`, "error");
+    el("drawerMsg").textContent = "En cola — sigue el progreso en Actividad 🕘";
+    openActivity();
+  } catch (exc) {
+    el("drawerMsg").textContent = `Error: ${exc.message}`;
+    el("installBtn").disabled = false;
   }
 }
 
-async function cancelJob(jobId) {
+// ---------------------------------------------------------------------------
+// Manual search / paste-link
+// ---------------------------------------------------------------------------
+
+async function manualSearch() {
+  const q = el("manualQuery").value.trim();
+  if (!q) return;
+  el("candidatesList").innerHTML = '<p class="hint">Buscando…</p>';
   try {
-    await api(`/api/jobs/${jobId}/cancel`, { method: "POST" });
-    await loadJobs();
-  } catch (err) {
-    setMessage(`No se pudo cancelar: ${err.message}`, "error");
+    const data = await api("/api/search", { method: "POST", body: JSON.stringify({ query: q, limit: 8 }) });
+    renderCandidates(data.results || []);
+  } catch (exc) {
+    el("candidatesList").innerHTML = `<p class="hint">Error: ${escapeHtml(exc.message)}</p>`;
   }
 }
 
-async function retryJob(jobId) {
+async function manualPreview() {
+  const url = el("manualUrl").value.trim();
+  if (!url) return;
+  el("manualPreview").innerHTML = '<p class="hint">Cargando…</p>';
   try {
-    await api(`/api/jobs/${jobId}/retry`, { method: "POST" });
-    setMessage("Job reencolado.", "success");
-    await loadJobs();
-  } catch (err) {
-    setMessage(`No se pudo reintentar: ${err.message}`, "error");
+    const data = await api("/api/preview", { method: "POST", body: JSON.stringify({ url }) });
+    renderCandidates([{ ...data, score: 1, webpage_url: data.webpage_url }]);
+    el("manualPreview").innerHTML = "";
+  } catch (exc) {
+    el("manualPreview").innerHTML = `<p class="hint">Error: ${escapeHtml(exc.message)}</p>`;
   }
 }
 
-const AUTOPILOT_STATUS_LABELS = {
-  running: "en curso",
-  done: "completado",
-  cancelled: "cancelado",
-};
+// ---------------------------------------------------------------------------
+// Activity (jobs + scan)
+// ---------------------------------------------------------------------------
 
-function updateQueueBadge() {
-  const activeJobs = state.jobs.filter((j) => j.status === "queued" || j.status === "running").length;
-  const activeAutopilot = state.autopilotRun && state.autopilotRun.status === "running" ? 1 : 0;
-  const total = activeJobs + activeAutopilot;
-  const badge = $("queueBadge");
-  badge.hidden = total === 0;
-  badge.textContent = String(total);
+function jobStatusLabel(status) {
+  return { queued: "En cola", running: "Descargando…", done: "✓ Completado", failed: "✗ Falló", cancelled: "Cancelado" }[status] || status;
 }
 
-function renderAutopilotStatus() {
-  const box = $("autopilotStatus");
-  const run = state.autopilotRun;
-  updateQueueBadge();
-  if (!run) {
-    box.hidden = true;
-    return;
-  }
-  box.hidden = false;
-  const lastLog = (run.logs || [])[run.logs.length - 1] || "";
-  const isRunning = run.status === "running";
-  const pct = run.total ? Math.round((run.processed / run.total) * 100) : 0;
-  const expanded = state.autopilotExpanded;
-  const skipReasons = {};
-  for (const s of run.skipped || []) {
-    skipReasons[s.reason] = (skipReasons[s.reason] || 0) + 1;
-  }
-  const reasonSummary = Object.entries(skipReasons)
-    .map(([reason, count]) => `${count} ${reason}`)
-    .join(", ");
-  box.innerHTML = `
-    <div class="jobHead">
-      <div class="jobTitle">
-        <strong>${run.scope}</strong>
-        <span>${run.processed}/${run.total} · ${run.queued.length} encolados · ${run.skipped.length} omitidos</span>
-      </div>
-      <span class="status ${run.status}">${AUTOPILOT_STATUS_LABELS[run.status] || run.status}</span>
-    </div>
-    <div class="autopilotBar"><div class="autopilotBarFill" style="width:${pct}%"></div></div>
-    <div class="jobMeta">
-      <span class="lastLog">${lastLog}</span>
-      <div class="jobActions">
-        ${run.skipped.length ? `<button type="button" class="linkBtn" id="autopilotToggleBtn">${expanded ? "Ocultar detalle" : "Ver detalle"}</button>` : ""}
-        ${isRunning ? `<button type="button" class="ghost small" id="autopilotCancelBtn">Detener</button>` : ""}
-      </div>
-    </div>
-    ${expanded && reasonSummary ? `<p class="hint autopilotReasons">Omitidos por: ${reasonSummary}</p>` : ""}
-    ${
-      expanded
-        ? `<pre class="logs">${(run.skipped || []).map((s) => `omitido — ${s.name}: ${s.reason}`).concat(run.logs || []).join("\n")}</pre>`
-        : ""
-    }
-  `;
-  if (isRunning) {
-    $("autopilotCancelBtn").addEventListener("click", cancelAutopilot);
-  }
-  if (run.skipped.length) {
-    $("autopilotToggleBtn").addEventListener("click", () => {
-      state.autopilotExpanded = !state.autopilotExpanded;
-      renderAutopilotStatus();
-    });
-  }
-}
-
-async function cancelAutopilot() {
-  if (!state.autopilotRun) return;
-  try {
-    await api(`/api/autopilot/${state.autopilotRun.id}/cancel`, { method: "POST" });
-  } catch (err) {
-    setMessage(`No se pudo detener: ${err.message}`, "error", "autoMsg");
-  }
-}
-
-async function startAutopilot() {
-  const item = findSelectedItem();
-  if (!item) {
-    setMessage("Elige primero una serie o película.", "error", "autoMsg");
-    return;
-  }
-  const assets = [];
-  if ($("autoAssetAudio").checked) assets.push("audio");
-  if ($("autoAssetVideo").checked) assets.push("video");
-  if (!assets.length) {
-    setMessage("Marca al menos audio o video.", "error", "autoMsg");
-    return;
-  }
-
-  const body = {
-    assets,
-    min_score: Number($("autoThreshold").value) / 100,
-    overwrite: $("autoOverwrite").checked,
-    refresh: $("autoRefresh").checked,
-    library: item.library,
-  };
-
-  $("autopilotStartBtn").disabled = true;
-  setMessage("Iniciando autopiloto...", "", "autoMsg");
-  try {
-    const data = await api("/api/autopilot", { method: "POST", body: JSON.stringify(body) });
-    state.autopilotRun = data.run;
-    renderAutopilotStatus();
-    setMessage(`Autopiloto en marcha sobre ${data.run.total} destino(s). Puedes seguirlo en "Cola".`, "success", "autoMsg");
-    switchView("queue");
-  } catch (err) {
-    setMessage(`No se pudo iniciar: ${err.message}`, "error", "autoMsg");
-  } finally {
-    $("autopilotStartBtn").disabled = false;
-  }
-}
-
-const STATUS_LABELS = {
-  queued: "en cola",
-  running: "en curso",
-  done: "completado",
-  failed: "fallido",
-  cancelled: "cancelado",
-};
-
-function renderJobs() {
-  $("queueCount").textContent = `${state.jobs.length} jobs`;
-  updateQueueBadge();
-  const box = $("jobs");
-  box.innerHTML = "";
-  if (!state.jobs.length) {
-    box.innerHTML = `<div class="emptyState">Todavía no hay trabajos en cola. Ve a "Instalar" para buscar un opening.</div>`;
-    return;
-  }
-  for (const job of state.jobs) {
-    const el = document.createElement("article");
-    el.className = "job";
-    const title = job.result?.title || job.url;
-    const canCancel = job.status === "queued" || job.status === "running";
-    const canRetry = job.status === "failed" || job.status === "cancelled";
-    const logs = job.logs || [];
-    const lastLog = logs[logs.length - 1] || "";
-    const expanded = state.expandedJobs.has(job.id);
-    el.innerHTML = `
+function jobHtml(job) {
+  const dest = job.destination.split("/").pop();
+  const lastLog = job.logs[job.logs.length - 1] || "";
+  return `
+    <div class="jobRow status-${job.status}">
       <div class="jobHead">
-        <div class="jobTitle">
-          <strong>${title}</strong>
-          <span>${job.destination}</span>
-        </div>
-        <span class="status ${job.status}">${STATUS_LABELS[job.status] || job.status}</span>
+        <strong>${escapeHtml(dest)}</strong>
+        <span class="jobStatus">${jobStatusLabel(job.status)}</span>
       </div>
-      <div class="jobMeta">
-        ${lastLog && !expanded ? `<span class="lastLog">${lastLog}</span>` : `<span></span>`}
-        <div class="jobActions">
-          ${logs.length ? `<button type="button" class="linkBtn" data-action="toggle" data-id="${job.id}">${expanded ? "Ocultar registro" : "Ver registro"}</button>` : ""}
-          ${canCancel ? `<button type="button" class="ghost small" data-action="cancel" data-id="${job.id}">Cancelar</button>` : ""}
-          ${canRetry ? `<button type="button" class="ghost small" data-action="retry" data-id="${job.id}">Reintentar</button>` : ""}
-        </div>
-      </div>
-      ${expanded ? `<pre class="logs">${logs.join("\n")}</pre>` : ""}
-    `;
-    box.appendChild(el);
+      <div class="jobMeta">${escapeHtml(job.result?.title || job.url)}</div>
+      ${job.status === "running" ? `<div class="jobLog">${escapeHtml(lastLog)}</div>` : ""}
+      ${job.status === "failed" ? `<div class="jobLog error">${escapeHtml(lastLog)}</div>` : ""}
+      ${
+        job.status === "queued" || job.status === "running"
+          ? `<button class="linkBtn small" data-cancel="${job.id}" type="button">Cancelar</button>`
+          : ""
+      }
+    </div>`;
+}
+
+function renderActivity() {
+  const scan = state.scan;
+  let scanText = "";
+  if (scan.running) {
+    scanText = "🔄 Escaneo automático en curso…";
+  } else if (scan.last_summary && scan.last_finished) {
+    const s = scan.last_summary;
+    const parts = [];
+    if (s.installed?.length) parts.push(`${s.installed.length} instalados`);
+    if (s.new_review?.length) parts.push(`${s.new_review.length} a revisión`);
+    if (s.errors?.length) parts.push(`${s.errors.length} errores`);
+    scanText = `Último escaneo: ${fmtWhen(scan.last_finished)}${parts.length ? " — " + parts.join(", ") : " — nada que hacer"}`;
+  } else {
+    scanText = "Aún no se ha ejecutado ningún escaneo automático.";
+  }
+  el("scanSummary").textContent = scanText;
+
+  const jobs = [...state.jobs].sort((a, b) => b.created_at - a.created_at).slice(0, 60);
+  el("jobsList").innerHTML = jobs.length ? jobs.map(jobHtml).join("") : '<p class="hint">Sin actividad todavía.</p>';
+  el("jobsList").querySelectorAll("[data-cancel]").forEach((btn) => {
+    btn.addEventListener("click", () => api(`/api/jobs/${btn.dataset.cancel}/cancel`, { method: "POST" }).catch(() => {}));
+  });
+
+  const running = state.jobs.filter((j) => j.status === "running" || j.status === "queued").length;
+  el("activityBadge").hidden = running === 0;
+  el("activityBadge").textContent = running;
+  el("scanDot").hidden = !scan.running;
+}
+
+function openActivity() {
+  el("activityOverlay").hidden = false;
+  refreshJobs();
+}
+
+function closeActivity() {
+  el("activityOverlay").hidden = true;
+}
+
+async function refreshJobs() {
+  try {
+    const data = await api("/api/jobs");
+    state.jobs = data.jobs;
+    renderActivity();
+  } catch {}
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostics
+// ---------------------------------------------------------------------------
+
+function statusRow(label, ok, detail) {
+  const icon = ok ? "✅" : "⚠️";
+  return `<div class="diagRow"><span>${icon} ${escapeHtml(label)}</span><span class="diagDetail">${escapeHtml(detail || "")}</span></div>`;
+}
+
+async function openDiagnostics() {
+  el("statusModal").hidden = false;
+  el("statusModalBody").innerHTML = '<p class="hint">Cargando…</p>';
+  try {
+    const s = await api("/api/status");
+    const rows = [];
+    rows.push(`<h4>Bibliotecas</h4>`);
+    s.roots.forEach((r) => rows.push(statusRow(r.name, r.exists, r.exists ? `${r.items} elementos` : `no encontrada: ${r.path}`)));
+    rows.push(`<h4>Servidores</h4>`);
+    rows.push(statusRow("Jellyfin", s.jellyfin.configured && s.jellyfin.reachable, s.jellyfin.configured ? (s.jellyfin.reachable ? s.jellyfin.url : "no responde") : "no configurado"));
+    rows.push(statusRow("Emby", s.emby.configured && s.emby.reachable, s.emby.configured ? (s.emby.reachable ? s.emby.url : "no responde") : "no configurado"));
+    rows.push(statusRow("Telegram", s.telegram, s.telegram ? "avisos activados" : "no configurado (opcional)"));
+    rows.push(`<h4>Escaneo automático</h4>`);
+    rows.push(
+      `<div class="diagRow"><span>Cada ${s.auto_scan.interval_hours}h</span><span class="diagDetail">umbral ${Math.round(
+        s.auto_scan.min_score * 100
+      )}% · ${s.auto_scan.assets.join(" + ")}</span></div>`
+    );
+    if (s.auto_scan.last_finished) rows.push(`<div class="diagRow"><span>Último: ${fmtWhen(s.auto_scan.last_finished)}</span></div>`);
+    el("statusModalBody").innerHTML = rows.join("");
+  } catch (exc) {
+    el("statusModalBody").innerHTML = `<p class="hint">Error: ${escapeHtml(exc.message)}</p>`;
   }
 }
 
-function onJobsClick(ev) {
-  const btn = ev.target.closest("button[data-action]");
-  if (!btn) return;
-  const { action, id } = btn.dataset;
-  if (action === "cancel") cancelJob(id);
-  if (action === "retry") retryJob(id);
-  if (action === "toggle") {
-    if (state.expandedJobs.has(id)) state.expandedJobs.delete(id);
-    else state.expandedJobs.add(id);
-    renderJobs();
-  }
-}
-
-async function loadJobs() {
-  const data = await api("/api/jobs");
-  state.jobs = data.jobs;
-  renderJobs();
-}
+// ---------------------------------------------------------------------------
+// Live updates (SSE)
+// ---------------------------------------------------------------------------
 
 function connectEvents() {
-  const events = new EventSource("/api/events");
-  events.addEventListener("message", (ev) => {
-    const payload = JSON.parse(ev.data);
-    if (payload.type === "job") {
-      const job = payload.job;
-      const idx = state.jobs.findIndex((j) => j.id === job.id);
-      if (idx >= 0) state.jobs[idx] = job;
-      else state.jobs.unshift(job);
-      renderJobs();
-      loadItems().catch(() => {});
-    }
-    if (payload.type === "autopilot") {
-      if (!state.autopilotRun || state.autopilotRun.id === payload.run.id) {
-        state.autopilotRun = payload.run;
-        renderAutopilotStatus();
+  const source = new EventSource("/api/events");
+  source.addEventListener("message", (ev) => {
+    try {
+      const payload = JSON.parse(ev.data);
+      if (payload.type === "job") {
+        const idx = state.jobs.findIndex((j) => j.id === payload.job.id);
+        if (idx >= 0) state.jobs[idx] = payload.job;
+        else state.jobs.unshift(payload.job);
+        renderActivity();
+        if (payload.job.status === "done") loadLibrary();
+      } else if (payload.type === "scan") {
+        state.scan = payload.scan;
+        renderActivity();
+      } else if (payload.type === "scan_progress") {
+        if (payload.outcome === "installed") loadLibrary();
       }
+    } catch {}
+  });
+  source.onerror = () => {
+    source.close();
+    setTimeout(connectEvents, 4000);
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Boot
+// ---------------------------------------------------------------------------
+
+async function loadLibrary() {
+  const data = await api("/api/library");
+  state.items = data.items;
+  state.libraries = data.libraries;
+  el("brandSub").textContent = `${data.items.length} elementos en ${data.libraries.length} bibliotecas`;
+  renderLibraryChips();
+  renderGrid();
+}
+
+async function loadScanStatus() {
+  try {
+    const data = await api("/api/scan/status");
+    state.scan = data.scan;
+    renderActivity();
+  } catch {}
+}
+
+function wireStatic() {
+  el("searchInput").addEventListener("input", (e) => {
+    state.search = e.target.value;
+    renderGrid();
+  });
+  document.querySelectorAll("#statusChips .chip").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("#statusChips .chip").forEach((b) => b.classList.remove("selected"));
+      btn.classList.add("selected");
+      state.filterStatus = btn.dataset.filter;
+      renderGrid();
+    });
+  });
+
+  el("drawerClose").addEventListener("click", closeDrawer);
+  el("drawerOverlay").addEventListener("click", (e) => {
+    if (e.target === el("drawerOverlay")) closeDrawer();
+  });
+  el("researchBtn").addEventListener("click", searchCandidates);
+  el("installBtn").addEventListener("click", installSelected);
+  el("manualSearchBtn").addEventListener("click", manualSearch);
+  el("manualPreviewBtn").addEventListener("click", manualPreview);
+
+  el("activityBtn").addEventListener("click", openActivity);
+  el("activityClose").addEventListener("click", closeActivity);
+  el("activityOverlay").addEventListener("click", (e) => {
+    if (e.target === el("activityOverlay")) closeActivity();
+  });
+
+  el("statusBtn").addEventListener("click", openDiagnostics);
+  el("statusModalClose").addEventListener("click", () => (el("statusModal").hidden = true));
+  el("statusModal").addEventListener("click", (e) => {
+    if (e.target === el("statusModal")) el("statusModal").hidden = true;
+  });
+
+  el("scanNowBtn").addEventListener("click", async () => {
+    el("scanDot").hidden = false;
+    try {
+      await api("/api/scan/run", { method: "POST" });
+      openActivity();
+    } catch (exc) {
+      alert(exc.message);
     }
   });
 }
 
-$("refreshItems").addEventListener("click", loadItems);
-$("destinationFilter").addEventListener("input", renderItems);
-$("onlyMissing").addEventListener("change", () => {
-  state.onlyMissing = $("onlyMissing").checked;
-  renderItems();
-});
-$("backToListBtn").addEventListener("click", backToList);
-$("viewInstallBtn").addEventListener("click", () => switchView("install"));
-$("viewQueueBtn").addEventListener("click", () => switchView("queue"));
-$("previewBtn").addEventListener("click", previewUrl);
-$("enqueueBtn").addEventListener("click", enqueue);
-$("searchBtn").addEventListener("click", searchYoutube);
-$("researchBtn").addEventListener("click", autoSearch);
-$("searchQuery").addEventListener("keydown", (ev) => {
-  if (ev.key === "Enter") {
-    ev.preventDefault();
-    searchYoutube();
-  }
-});
-$("jobs").addEventListener("click", onJobsClick);
-$("autoThreshold").addEventListener("input", () => {
-  $("autoThresholdLabel").textContent = `${$("autoThreshold").value}%`;
-});
-$("autopilotStartBtn").addEventListener("click", startAutopilot);
-$("statusBtn").addEventListener("click", openStatusModal);
-$("statusModalClose").addEventListener("click", closeStatusModal);
-$("statusRecheckBtn").addEventListener("click", () => loadStatus().catch(() => {}));
-$("statusModal").addEventListener("click", (ev) => {
-  if (ev.target.id === "statusModal") closeStatusModal();
-});
-document.addEventListener("keydown", (ev) => {
-  if (ev.key === "Escape" && !$("statusModal").hidden) closeStatusModal();
-});
+async function boot() {
+  wireStatic();
+  await loadLibrary();
+  await loadScanStatus();
+  await refreshJobs();
+  connectEvents();
+  setInterval(loadLibrary, 5 * 60 * 1000);
+}
 
-renderStep();
-loadItems().catch((err) => setMessage(err.message, "error"));
-loadJobs().catch(() => {});
-loadStatus().catch(() => {});
-connectEvents();
+boot();

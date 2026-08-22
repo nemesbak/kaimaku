@@ -4,143 +4,126 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Kaimaku</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='16' fill='%23c1432a'/%3E%3Ctext x='50' y='72' font-size='64' text-anchor='middle' font-family='serif' fill='%23eee7da'%3E%E9%96%8B%3C/text%3E%3C/svg%3E" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23161112'/%3E%3Ctext x='50' y='70' font-size='58' text-anchor='middle' font-family='serif' fill='%23e0463a'%3E%E9%96%8B%3C/text%3E%3C/svg%3E" />
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
-    <main class="shell">
-      <header class="topbar">
-        <div class="brand">
-          <span class="brandMark" aria-hidden="true">開幕</span>
-          <div>
-            <h1>Kaimaku</h1>
-            <p>Pon el opening y la intro a tus series y películas, solo</p>
-          </div>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brandMark" aria-hidden="true">開幕</span>
+        <div class="brandText">
+          <h1>Kaimaku</h1>
+          <p id="brandSub">Openings y temas para tu biblioteca</p>
         </div>
-        <div class="topbarActions">
-          <button id="statusBtn" class="iconButton" title="Diagnóstico: carpetas, Jellyfin, Emby" aria-label="Ver diagnóstico">⚙</button>
-          <button id="refreshItems" class="iconButton" title="Actualizar destinos" aria-label="Actualizar destinos">↻</button>
-        </div>
-      </header>
+      </div>
 
-      <div id="statusBanner" class="statusBanner" hidden></div>
+      <div class="searchWrap">
+        <input id="searchInput" type="search" placeholder="Buscar serie o película…" autocomplete="off" />
+      </div>
 
-      <nav class="viewTabs">
-        <button id="viewInstallBtn" type="button" class="viewTab selected">Instalar</button>
-        <button id="viewQueueBtn" type="button" class="viewTab">
-          Cola
-          <span id="queueBadge" class="badgeCount" hidden>0</span>
+      <div class="topActions">
+        <button id="scanNowBtn" class="ghostBtn" type="button">
+          <span class="scanDot" id="scanDot" hidden></span>
+          Escanear ahora
         </button>
-      </nav>
+        <button id="activityBtn" class="iconBtn" title="Actividad" aria-label="Actividad">
+          🕘<span id="activityBadge" class="badge" hidden>0</span>
+        </button>
+        <button id="statusBtn" class="iconBtn" title="Diagnóstico" aria-label="Diagnóstico">⚙</button>
+      </div>
+    </header>
 
-      <section id="viewInstall" class="panel view">
-        <!-- Paso 1: elegir destino -->
-        <div id="pickStep">
-          <h2 class="viewTitle">¿Qué serie o película quieres arreglar? <span id="itemCount" class="stepCount"></span></h2>
+    <nav class="filterBar">
+      <div id="libraryChips" class="chipRow"></div>
+      <div class="chipRow segmented" id="statusChips">
+        <button class="chip selected" data-filter="all" type="button">Todo</button>
+        <button class="chip" data-filter="review" type="button">Revisión <span id="countReview" class="chipCount"></span></button>
+        <button class="chip" data-filter="missing" type="button">Incompletos <span id="countMissing" class="chipCount"></span></button>
+        <button class="chip" data-filter="done" type="button">Completos</button>
+      </div>
+    </nav>
 
-          <input id="destinationFilter" class="destFilter" type="search" placeholder="Buscar serie o película..." />
-          <div id="libraryTabs" class="libraryTabs"></div>
-          <label class="onlyMissing">
-            <input id="onlyMissing" type="checkbox" />
-            Mostrar solo lo que le falta audio o vídeo
-          </label>
-
-          <div id="destinations" class="destinations"></div>
-        </div>
-
-        <!-- Paso 2: qué hacer con el destino elegido -->
-        <div id="actStep" hidden>
-          <button id="backToListBtn" type="button" class="linkBtn backLink">‹ Elegir otra serie/película</button>
-
-          <div class="destHeader">
-            <span id="actDestKind" class="destKind"></span>
-            <span class="destHeaderBody">
-              <strong id="actDestName"></strong>
-              <span id="actDestLib"></span>
-            </span>
-            <span id="actDestBadges" class="badges"></span>
-          </div>
-
-          <div class="resultsHead">
-            <p class="hint">Kaimaku ya ha buscado y marcado el mejor candidato.</p>
-            <button id="researchBtn" type="button" class="linkBtn">↻ Buscar de nuevo</button>
-          </div>
-
-          <div id="searchResults" class="searchResults"></div>
-
-          <div id="preview" class="preview empty">
-            <div class="emptyState">Buscando…</div>
-          </div>
-          <p id="previewLink" class="previewLink" hidden>
-            <a id="previewLinkAnchor" href="#" target="_blank" rel="noopener">Ver en YouTube ↗</a>
-          </p>
-
-          <details class="advanced">
-            <summary>Buscar otro / pegar un enlace</summary>
-            <label class="field">
-              <span>Buscar en YouTube</span>
-              <div class="inline">
-                <input id="searchQuery" type="text" placeholder="Ej: Dragon Ball Z opening 1" />
-                <button id="searchBtn" type="button">Buscar</button>
-              </div>
-            </label>
-            <label class="field">
-              <span>...o pega un enlace directo</span>
-              <div class="inline">
-                <input id="youtubeUrl" type="url" placeholder="https://www.youtube.com/watch?v=..." />
-                <button id="previewBtn" type="button">Previsualizar</button>
-              </div>
-            </label>
-          </details>
-
-          <div class="chips">
-            <label class="chip"><input id="assetAudio" type="checkbox" checked /> Audio</label>
-            <label class="chip"><input id="assetVideo" type="checkbox" checked /> Video</label>
-            <label class="chip"><input id="refreshLibs" type="checkbox" checked /> Refrescar bibliotecas</label>
-          </div>
-
-          <button id="enqueueBtn" type="button" class="primary">Instalar</button>
-          <p id="formMsg" class="message"></p>
-
-          <details class="bulkAutopilot">
-            <summary>¿Aplicarlo a toda la biblioteca <strong id="autoScopeLibraryName">—</strong> de una vez?</summary>
-            <p class="hint">Busca, puntúa e instala en cada destino de la biblioteca sin que tengas que revisar uno a uno.</p>
-            <div class="chips">
-              <label class="chip"><input id="autoAssetAudio" type="checkbox" checked /> Audio</label>
-              <label class="chip"><input id="autoAssetVideo" type="checkbox" checked /> Video</label>
-              <label class="chip"><input id="autoOverwrite" type="checkbox" /> Sobrescribir existentes</label>
-              <label class="chip"><input id="autoRefresh" type="checkbox" checked /> Refrescar bibliotecas</label>
-            </div>
-            <label class="field">
-              <span>Confianza mínima para instalar sin revisar: <b id="autoThresholdLabel">75%</b></span>
-              <input id="autoThreshold" type="range" min="40" max="95" step="5" value="75" />
-            </label>
-            <p class="hint">Por debajo del umbral, se omite en vez de instalar algo dudoso.</p>
-            <button id="autopilotStartBtn" type="button" class="primary">Buscar e instalar en toda la biblioteca</button>
-            <p id="autoMsg" class="message"></p>
-          </details>
-        </div>
-      </section>
-
-      <section id="viewQueue" class="panel view" hidden>
-        <div class="panelHeader">
-          <h2>Cola</h2>
-          <span id="queueCount" class="pill">0 jobs</span>
-        </div>
-        <div id="autopilotStatus" class="autopilotStatus" hidden></div>
-        <div id="jobs" class="jobs"></div>
-      </section>
+    <main class="gridWrap">
+      <div id="emptyState" class="emptyState" hidden>
+        <p>No hay nada que coincida con este filtro.</p>
+      </div>
+      <div id="grid" class="grid"></div>
     </main>
 
-    <div id="statusModal" class="modalOverlay" hidden>
-      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="statusModalTitle">
-        <div class="modalHead">
-          <h2 id="statusModalTitle">Diagnóstico</h2>
-          <button id="statusModalClose" class="iconButton" aria-label="Cerrar diagnóstico">✕</button>
+    <!-- Item detail drawer -->
+    <div id="drawerOverlay" class="overlay" hidden>
+      <aside id="drawer" class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawerTitle">
+        <button id="drawerClose" class="drawerClose" aria-label="Cerrar">✕</button>
+
+        <div class="drawerHead">
+          <div id="drawerPoster" class="drawerPoster"></div>
+          <div class="drawerHeadText">
+            <span id="drawerKind" class="kindTag"></span>
+            <h2 id="drawerTitle"></h2>
+            <p id="drawerLib" class="drawerLib"></p>
+            <div id="drawerBadges" class="badges"></div>
+          </div>
         </div>
-        <p class="hint">Aquí ves exactamente qué ha encontrado Kaimaku. Si algo falla, el mensaje te dice qué tocar en <code>docker-compose.yml</code>.</p>
+
+        <section class="drawerSection">
+          <h3>Instalado actualmente</h3>
+          <div id="installedCurrent" class="installedList"></div>
+        </section>
+
+        <section class="drawerSection">
+          <div class="sectionHead">
+            <h3>Candidatos</h3>
+            <button id="researchBtn" class="linkBtn" type="button">↻ Buscar de nuevo</button>
+          </div>
+          <p id="candidatesHint" class="hint"></p>
+          <div id="candidatesList" class="candidatesList"></div>
+        </section>
+
+        <details class="advanced">
+          <summary>Buscar otro término / pegar un enlace</summary>
+          <label class="field">
+            <span>Buscar en YouTube</span>
+            <div class="inline">
+              <input id="manualQuery" type="text" placeholder="Ej: Dragon Ball Z opening 1" />
+              <button id="manualSearchBtn" type="button">Buscar</button>
+            </div>
+          </label>
+          <label class="field">
+            <span>…o pega un enlace directo</span>
+            <div class="inline">
+              <input id="manualUrl" type="url" placeholder="https://www.youtube.com/watch?v=…" />
+              <button id="manualPreviewBtn" type="button">Previsualizar</button>
+            </div>
+          </label>
+          <div id="manualPreview"></div>
+        </details>
+
+        <div class="installBar">
+          <label class="chip small"><input id="assetAudio" type="checkbox" checked /> Audio</label>
+          <label class="chip small"><input id="assetVideo" type="checkbox" checked /> Video</label>
+          <button id="installBtn" class="primary" type="button" disabled>Instalar</button>
+        </div>
+        <p id="drawerMsg" class="message"></p>
+      </aside>
+    </div>
+
+    <!-- Activity panel -->
+    <div id="activityOverlay" class="overlay" hidden>
+      <aside id="activityPanel" class="drawer" role="dialog" aria-modal="true" aria-labelledby="activityTitle">
+        <button id="activityClose" class="drawerClose" aria-label="Cerrar">✕</button>
+        <h2 id="activityTitle">Actividad</h2>
+        <p id="scanSummary" class="hint"></p>
+        <div id="jobsList" class="jobsList"></div>
+      </aside>
+    </div>
+
+    <!-- Diagnostics modal -->
+    <div id="statusModal" class="overlay" hidden>
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="statusModalTitle">
+        <button id="statusModalClose" class="drawerClose" aria-label="Cerrar">✕</button>
+        <h2 id="statusModalTitle">Diagnóstico</h2>
+        <p class="hint">Qué ha encontrado Kaimaku exactamente. Si algo falla, aquí ves qué tocar en el <code>docker-compose.yml</code>.</p>
         <div id="statusModalBody" class="modalBody"></div>
-        <button id="statusRecheckBtn" type="button" class="ghost small">↻ Volver a comprobar</button>
       </div>
     </div>
 
