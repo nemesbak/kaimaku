@@ -881,6 +881,13 @@ def auto_scan_loop() -> None:
 app = FastAPI(title="Kaimaku")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
+@app.middleware("http")
+async def add_no_cache_headers(request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
 
 @app.on_event("startup")
 def startup() -> None:
