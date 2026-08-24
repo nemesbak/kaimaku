@@ -45,3 +45,4 @@ verify_single_theme_files.py
 ffmpeg-wrapper
 ffprobe-wrapper
 tools/
+docker-app/docker-compose.override.yml

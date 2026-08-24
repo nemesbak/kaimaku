@@ -152,6 +152,7 @@ def clear_review(item_id: str) -> None:
         if entry:
             entry["needs_review"] = False
             entry["candidates"] = []
+            entry["last_error"] = None
             save_state()
 
 
@@ -192,6 +193,7 @@ def media_items() -> list[dict[str, Any]]:
                     "has_video": (child / THEME_VIDEO).is_file(),
                     "needs_review": bool(state.get("needs_review")),
                     "last_scanned": state.get("last_scanned"),
+                    "last_error": state.get("last_error"),
                     "audio_source": state.get("audio_source"),
                     "video_source": state.get("video_source"),
                 }
@@ -791,35 +793,55 @@ def run_auto_scan(trigger: str = "schedule") -> dict[str, Any]:
                 _, _, candidates = auto_search_candidates(Path(item["path"]))
             except Exception as exc:
                 error_names.append(item["name"])
-                update_item_state(item["id"], last_scanned=now_iso())
+                update_item_state(item["id"], last_scanned=now_iso(), last_error=str(exc))
                 emit_event({"type": "scan_progress", "item": item["name"], "outcome": "error", "detail": str(exc)})
                 continue
 
-            best = candidates[0] if candidates else None
-            if best and best["score"] >= AUTO_MIN_SCORE:
-                job = Job(id=uuid.uuid4().hex[:12], url=best["webpage_url"], destination=item["path"], assets=needed)
+            # Se intenta con TODOS los candidatos que superan el umbral, no solo el
+            # mejor: un video puede fallar al descargar (borrado, restringido por
+            # edad/region, sin formato valido) aunque su titulo/canal encajen bien,
+            # y antes eso hacia que el item se marcara como error sin mas alternativa
+            # aunque el candidato #2 o #3 hubiera funcionado perfectamente.
+            # Tope de 3 intentos por item para que un item con muchos candidatos
+            # empatados en el umbral no alargue el escaneo entero si todos fallan.
+            qualifying = [c for c in candidates if c["score"] >= AUTO_MIN_SCORE][:3]
+            installed_ok = False
+            last_error: str | None = None
+            for candidate in qualifying:
+                job = Job(id=uuid.uuid4().hex[:12], url=candidate["webpage_url"], destination=item["path"], assets=needed)
                 job.result["refresh"] = False  # batched at the end of the whole scan instead
                 jobs[job.id] = job
                 try:
                     run_install(job, source={
-                        "id": best["id"], "title": best["title"], "uploader": best.get("uploader"),
-                        "url": best["webpage_url"],
+                        "id": candidate["id"], "title": candidate["title"], "uploader": candidate.get("uploader"),
+                        "url": candidate["webpage_url"],
                     })
                     job.status = "done"
-                    installed_names.append(f"{item['name']} ({round(best['score'] * 100)}%)")
+                    installed_names.append(f"{item['name']} ({round(candidate['score'] * 100)}%)")
                     touched_libraries.add(item["library"])
                     emit_event({"type": "scan_progress", "item": item["name"], "outcome": "installed"})
+                    installed_ok = True
+                    break
                 except Exception as exc:
                     job.status = "failed"
-                    error_names.append(item["name"])
-                    emit_event({"type": "scan_progress", "item": item["name"], "outcome": "error", "detail": str(exc)})
-                update_item_state(item["id"], last_scanned=now_iso())
+                    last_error = str(exc)
+                    emit_event({"type": "scan_progress", "item": item["name"], "outcome": "error", "detail": last_error})
+
+            if installed_ok:
+                update_item_state(item["id"], last_scanned=now_iso(), last_error=None)
             else:
+                # Si habia al menos un candidato con score suficiente y TODOS
+                # fallaron al descargar, eso si es un error real (no solo "nada
+                # confiable"): se deja para revision manual con el motivo real
+                # guardado, en vez de un simple "error" sin ninguna pista.
+                if qualifying:
+                    error_names.append(item["name"])
                 update_item_state(
                     item["id"],
                     needs_review=True,
                     candidates=candidates[:5],
                     last_scanned=now_iso(),
+                    last_error=last_error,
                 )
                 if not was_review:
                     newly_review_names.append(item["name"])

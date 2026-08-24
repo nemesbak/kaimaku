@@ -231,6 +231,7 @@ async function openDrawer(itemId) {
   el("candidatesHint").textContent = item.needs_review
     ? "Kaimaku ya buscó y no encontró nada suficientemente fiable — revisa y elige a mano."
     : "Kaimaku ya ha buscado y marcado el mejor candidato.";
+  el("drawerMsg").textContent = item.last_error ? `Último intento automático falló: ${item.last_error}` : "";
   el("installBtn").disabled = true;
 
   el("drawerOverlay").hidden = false;
