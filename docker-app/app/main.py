@@ -309,6 +309,25 @@ def run_cancelable(cmd: list[str], job_id: str) -> subprocess.CompletedProcess[s
         running_processes.pop(job_id, None)
 
 
+# Firma exacta vista repetidamente durante escaneos largos (2026-08-24 y
+# 2026-08-25, 5 videos distintos): la API de YouTube devuelve 403 bajo el
+# volumen de peticiones de un escaneo completo, yt-dlp cae a "solo imagenes
+# disponibles" y el formato pedido ya no existe. Es transitorio -- probado a
+# mano varias veces, el MISMO video se descarga bien minutos despues sin
+# cambiar nada. Un reintento con espera cubre la mayoria de los casos sin
+# alargar mucho un fallo real (video borrado/restringido de verdad).
+TRANSIENT_YT_ERROR_RE = re.compile(r"HTTP Error 403|Unable to download API page", re.I)
+
+
+def _yt_dlp_download(cmd: list[str], job_id: str, log: Any, retry_wait: int = 25) -> subprocess.CompletedProcess[str]:
+    proc = run_cancelable(cmd, job_id)
+    if proc.returncode != 0 and TRANSIENT_YT_ERROR_RE.search(proc.stderr or ""):
+        log(f"YouTube devolvio 403 (transitorio bajo carga alta); reintentando en {retry_wait}s")
+        time.sleep(retry_wait)
+        proc = run_cancelable(cmd, job_id)
+    return proc
+
+
 def yt_dlp_json(url: str) -> dict[str, Any]:
     cmd = [sys.executable, "-m", "yt_dlp", "--dump-single-json", "--no-playlist", url]
     proc = run(cmd)
@@ -332,7 +351,7 @@ def download_audio(job_id: str, url: str, target: Path, log: Any) -> None:
         "-o", str(temp), url,
     ]
     log("Descargando audio y convirtiendo a mp3")
-    proc = run_cancelable(cmd, job_id)
+    proc = _yt_dlp_download(cmd, job_id, log)
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr.strip() or "audio download failed")
     found = sorted(target.parent.glob(target.stem + ".download.*"), key=lambda p: p.stat().st_mtime)
@@ -352,7 +371,7 @@ def download_video(job_id: str, url: str, target: Path, log: Any) -> None:
         "-o", str(temp), url,
     ]
     log("Descargando video y convirtiendo a mp4")
-    proc = run_cancelable(cmd, job_id)
+    proc = _yt_dlp_download(cmd, job_id, log)
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr.strip() or "video download failed")
     found = sorted(target.parent.glob(target.stem + ".download.*"), key=lambda p: p.stat().st_mtime)
@@ -829,19 +848,32 @@ def run_auto_scan(trigger: str = "schedule") -> dict[str, Any]:
 
             if installed_ok:
                 update_item_state(item["id"], last_scanned=now_iso(), last_error=None)
-            else:
-                # Si habia al menos un candidato con score suficiente y TODOS
-                # fallaron al descargar, eso si es un error real (no solo "nada
-                # confiable"): se deja para revision manual con el motivo real
+            elif qualifying:
+                # Habia al menos un candidato con score suficiente y TODOS
+                # fallaron al descargar: eso si es un error real (no solo "nada
+                # confiable"). Se deja para revision manual con el motivo real
                 # guardado, en vez de un simple "error" sin ninguna pista.
-                if qualifying:
-                    error_names.append(item["name"])
+                error_names.append(item["name"])
                 update_item_state(
                     item["id"],
                     needs_review=True,
                     candidates=candidates[:5],
                     last_scanned=now_iso(),
                     last_error=last_error,
+                )
+                if not was_review:
+                    newly_review_names.append(item["name"])
+                emit_event({"type": "scan_progress", "item": item["name"], "outcome": "review"})
+            else:
+                # Ningun candidato llego al umbral: no se intento descargar nada,
+                # asi que no se toca last_error (no borrar el motivo de un fallo
+                # real de un escaneo anterior solo porque esta vez la busqueda
+                # no encontro nada igual de confiable).
+                update_item_state(
+                    item["id"],
+                    needs_review=True,
+                    candidates=candidates[:5],
+                    last_scanned=now_iso(),
                 )
                 if not was_review:
                     newly_review_names.append(item["name"])
