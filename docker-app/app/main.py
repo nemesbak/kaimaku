@@ -452,6 +452,7 @@ SERVERS = [("jellyfin", "JELLYFIN_URL", "JELLYFIN_API_KEY"), ("emby", "EMBY_URL"
 def find_library_id(base_url: str, api_key: str, library_name: str) -> str | None:
     req = request.Request(base_url.rstrip("/") + "/Library/VirtualFolders", method="GET")
     req.add_header("X-Emby-Token", api_key)
+    req.add_header("Authorization", f'MediaBrowser Token="{api_key}"')  # Jellyfin 12 ya no acepta X-Emby-Token solo
     with request.urlopen(req, timeout=15) as resp:
         folders = json.loads(resp.read())
     for folder in folders:
@@ -515,6 +516,7 @@ def refresh_servers(library_name: str) -> list[dict[str, Any]]:
             method="POST",
         )
         req.add_header("X-Emby-Token", token)
+        req.add_header("Authorization", f'MediaBrowser Token="{token}"')  # Jellyfin 12 ya no acepta X-Emby-Token solo
         try:
             with request.urlopen(req, timeout=20) as resp:
                 results.append({"name": name, "ok": True, "status": resp.status})
@@ -542,6 +544,7 @@ def _fetch_poster_index_for(base: str, token: str) -> dict[tuple[str, str], dict
         method="GET",
     )
     req.add_header("X-Emby-Token", token)
+    req.add_header("Authorization", f'MediaBrowser Token="{token}"')  # Jellyfin 12 ya no acepta X-Emby-Token solo
     with request.urlopen(req, timeout=30) as resp:
         payload = json.loads(resp.read())
     for entry in payload.get("Items") or []:
@@ -1003,6 +1006,7 @@ def get_poster(item: str):
     url = ref["base"].rstrip("/") + f"/Items/{ref['id']}/Images/Primary?maxWidth=480&quality=90"
     req = request.Request(url, method="GET")
     req.add_header("X-Emby-Token", ref["token"])
+    req.add_header("Authorization", f'MediaBrowser Token="{ref["token"]}"')  # Jellyfin 12 ya no acepta X-Emby-Token solo
     try:
         with request.urlopen(req, timeout=15) as resp:
             body = resp.read()
