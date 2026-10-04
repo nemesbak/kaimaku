@@ -37,6 +37,11 @@ services:
     ports:
       - "8098:8098"   # <-- puerto donde abrirás Kaimaku: http://IP-DEL-SERVIDOR:8098
     environment:
+      # Usuario con el que Kaimaku crea las carpetas theme-music/ y backdrops/
+      # (nunca root). Pon el mismo dueño que tienen tus medios:
+      #   Unraid: 99 / 100 · Synology/TrueNAS/Linux: el de `id tuusuario` (suele ser 1000 / 1000)
+      PUID: "1000"
+      PGID: "1000"
       # No hace falta tocar nada aquí: Kaimaku detecta solo cada subcarpeta que
       # encuentre dentro de /media (anime/, series/, peliculas/... con el
       # nombre que sea) y la trata como una biblioteca. Solo rellena
