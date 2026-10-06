@@ -26,6 +26,11 @@ from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingRes
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+try:
+    from app import setup_core as sc
+except ImportError:  # ejecutado fuera del paquete (pruebas)
+    import setup_core as sc  # type: ignore[no-redef]
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -44,30 +49,52 @@ _explicit_media_roots = [Path(p) for p in _media_roots_env.split(",") if p.strip
 THEME_AUDIO = Path("theme-music/song1.mp3")
 THEME_VIDEO = Path("backdrops/intro.mp4")
 
-AUTO_SCAN_INTERVAL_HOURS = float(os.environ.get("AUTO_SCAN_INTERVAL_HOURS", "12") or "12")
-AUTO_MIN_SCORE = float(os.environ.get("AUTO_MIN_SCORE", "0.75") or "0.75")
-AUTO_ASSETS = [a.strip() for a in os.environ.get("AUTO_ASSETS", "audio,video").split(",") if a.strip()]
-
-TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN", "").strip()
-TG_CHAT_ID = os.environ.get("TG_CHAT_ID", "").strip()
-TG_TOPIC_ID = os.environ.get("TG_TOPIC_ID", "").strip()
-
 
 def discover_media_roots() -> list[Path]:
-    """Auto-detect libraries as the immediate subfolders of /media, so a fresh
-    install works without having to know or type any folder names — only
-    MEDIA_BASE (i.e. the volume mapped to /media) has to be right."""
+    """Modo clasico: cada subcarpeta de /media es una biblioteca."""
     if not MEDIA_BASE.is_dir():
-        return [MEDIA_BASE]
-    subdirs = sorted(
-        (p for p in MEDIA_BASE.iterdir() if p.is_dir() and not p.name.startswith((".", "_"))),
-        key=lambda p: p.name.lower(),
-    )
-    return subdirs or [MEDIA_BASE]
+        return []
+    try:
+        return sorted(
+            (p for p in MEDIA_BASE.iterdir() if p.is_dir() and not p.name.startswith((".", "_"))),
+            key=lambda p: p.name.lower(),
+        )
+    except OSError:
+        return []
+
+
+def configured_libraries() -> list[dict[str, Any]]:
+    """Bibliotecas elegidas en el asistente de la web (modo /host)."""
+    return [lib for lib in sc.load_config()["libraries"] if lib.get("enabled", True) and lib.get("path")]
 
 
 def current_media_roots() -> list[Path]:
-    return _explicit_media_roots if _explicit_media_roots is not None else discover_media_roots()
+    libs = configured_libraries()
+    if libs:
+        return [Path(lib["path"]) for lib in libs]
+    if _explicit_media_roots is not None:
+        return _explicit_media_roots
+    return discover_media_roots()
+
+
+def library_ref(root: Path) -> dict[str, Any]:
+    """Nombre visible y biblioteca equivalente en Jellyfin/Emby de una carpeta raiz."""
+    key = safe_rel(root)
+    for lib in configured_libraries():
+        if lib["path"] == key:
+            return {"label": lib.get("label") or root.name, "servers": lib.get("servers") or {}, "root": root}
+    return {"label": root.name, "servers": {}, "root": root}
+
+
+def root_for(path: Path) -> Path | None:
+    resolved = path.resolve()
+    for root in current_media_roots():
+        try:
+            resolved.relative_to(root.resolve())
+            return root
+        except ValueError:
+            continue
+    return None
 
 
 def now_id() -> str:
@@ -99,14 +126,21 @@ def ensure_inside_roots(path: Path) -> Path:
 
 
 def media_root_name(path: Path) -> str | None:
-    resolved = path.resolve()
-    for root in current_media_roots():
-        try:
-            resolved.relative_to(root.resolve())
-            return root.name
-        except ValueError:
-            continue
-    return None
+    root = root_for(path)
+    return root.name if root else None
+
+
+def adopt_owner(path: Path, like: Path) -> None:
+    """Sin PUID (modo automatico) Kaimaku corre como root: cada carpeta/archivo que
+    crea pasa a ser del mismo dueño que la carpeta de la serie/pelicula, asi
+    Sonarr/Radarr/Jellyfin pueden moverlos o borrarlos sin 'Access denied'."""
+    if os.geteuid() != 0:
+        return
+    try:
+        st = like.stat()
+        os.chown(path, st.st_uid, st.st_gid)
+    except OSError:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +206,7 @@ def media_items() -> list[dict[str, Any]]:
             children = sorted(p for p in root.iterdir() if p.is_dir())
         except OSError:
             continue
+        label = library_ref(root)["label"]
         for child in children:
             if child.name.startswith("_"):
                 continue
@@ -186,8 +221,8 @@ def media_items() -> list[dict[str, Any]]:
                     "id": item_id,
                     "name": child.name,
                     "path": item_id,
-                    "root": safe_rel(root.resolve()),
-                    "library": root.name,
+                    "root": safe_rel(root),
+                    "library": label,
                     "kind": kind,
                     "has_audio": (child / THEME_AUDIO).is_file(),
                     "has_video": (child / THEME_VIDEO).is_file(),
@@ -460,7 +495,9 @@ def _auto_search_one_query(query: str) -> list[dict[str, Any]]:
 
 def auto_search_candidates(destination: Path, limit: int = 8) -> tuple[str, int | None, list[dict[str, Any]]]:
     name, year = parse_folder_name(destination.name)
-    anime = is_anime_library(media_root_name(destination))
+    root = root_for(destination)
+    # La carpeta (anime/) o el nombre de la biblioteca en Jellyfin ("Anime") deciden.
+    anime = root is None or is_anime_library(root.name) or is_anime_library(library_ref(root)["label"])
     queries = build_auto_queries(name, anime)
 
     seen: set[str] = set()
@@ -499,15 +536,13 @@ def auto_search_candidates(destination: Path, limit: int = 8) -> tuple[str, int 
 # Jellyfin / Emby integration: reachability, refresh, poster proxy
 # ---------------------------------------------------------------------------
 
-SERVERS = [("jellyfin", "JELLYFIN_URL", "JELLYFIN_API_KEY"), ("emby", "EMBY_URL", "EMBY_API_KEY")]
+def _servers() -> list[dict[str, Any]]:
+    return sc.configured_servers()
 
 
-def find_library_id(base_url: str, api_key: str, library_name: str) -> str | None:
-    req = request.Request(base_url.rstrip("/") + "/Library/VirtualFolders", method="GET")
-    req.add_header("X-Emby-Token", api_key)
-    req.add_header("Authorization", f'MediaBrowser Token="{api_key}"')  # Jellyfin 12 ya no acepta X-Emby-Token solo
-    with request.urlopen(req, timeout=15) as resp:
-        folders = json.loads(resp.read())
+def find_library_id(base_url: str, token: str, library_name: str) -> str | None:
+    """Modo clasico: la biblioteca del servidor cuya carpeta se llama igual que la nuestra."""
+    folders = sc.server_call(base_url, "/Library/VirtualFolders", token=token) or []
     for folder in folders:
         for loc in folder.get("Locations") or []:
             if Path(loc.replace("\\", "/")).name == library_name:
@@ -516,20 +551,23 @@ def find_library_id(base_url: str, api_key: str, library_name: str) -> str | Non
 
 
 def check_server_reachable(base_url: str) -> bool:
-    try:
-        req = request.Request(base_url.rstrip("/") + "/System/Info/Public", method="GET")
-        with request.urlopen(req, timeout=4) as resp:
-            return resp.status < 500
-    except Exception:
-        return False
+    return sc.public_info(base_url, timeout=4) is not None
 
 
-def server_status(url_key: str, token_key: str) -> dict[str, Any]:
-    url = os.environ.get(url_key, "").strip()
-    token = os.environ.get(token_key, "").strip()
-    if not url:
-        return {"configured": False, "reachable": False, "has_key": False, "url": None}
-    return {"configured": True, "reachable": check_server_reachable(url), "has_key": bool(token), "url": url}
+def servers_status() -> list[dict[str, Any]]:
+    out = []
+    for srv in _servers():
+        ok_auth = False
+        try:
+            sc.server_call(srv["url"], "/Library/VirtualFolders", token=srv["token"], timeout=8)
+            ok_auth = True
+        except Exception:
+            pass
+        out.append({
+            "kind": srv["kind"], "url": srv["url"], "user": srv.get("user"), "name": srv.get("name"),
+            "source": srv.get("source"), "reachable": ok_auth or check_server_reachable(srv["url"]), "auth": ok_auth,
+        })
+    return out
 
 
 def roots_status() -> list[dict[str, Any]]:
@@ -542,37 +580,35 @@ def roots_status() -> list[dict[str, Any]]:
                 count = sum(1 for p in root.iterdir() if p.is_dir() and not p.name.startswith("_"))
             except OSError:
                 exists = False
-        result.append({"path": safe_rel(root), "name": root.name, "exists": exists, "items": count})
+        result.append({"path": safe_rel(root), "name": library_ref(root)["label"], "exists": exists, "items": count})
     return result
 
 
-def refresh_servers(library_name: str) -> list[dict[str, Any]]:
+def refresh_servers(root: Path | None) -> list[dict[str, Any]]:
     """Scoped refresh (not /Library/Refresh) so installing one theme doesn't
     trigger a full-server rescan across every library."""
+    if root is None:
+        return []
+    ref = library_ref(root)
     results: list[dict[str, Any]] = []
-    for name, url_key, token_key in SERVERS:
-        token = os.environ.get(token_key, "").strip()
-        base = os.environ.get(url_key, "").strip()
-        if not token or not base:
-            continue
+    for srv in _servers():
+        name = srv["kind"]
         try:
-            library_id = find_library_id(base, token, library_name)
+            library_id = (ref["servers"].get(name) or {}).get("id") or find_library_id(srv["url"], srv["token"], root.name)
         except (HTTPError, URLError) as exc:
             results.append({"name": name, "ok": False, "error": str(exc)})
             continue
         if not library_id:
             results.append({"name": name, "ok": False, "error": "no matching library"})
             continue
-        req = request.Request(
-            base.rstrip("/") + f"/Items/{library_id}/Refresh"
-            "?metadataRefreshMode=ValidationOnly&imageRefreshMode=ValidationOnly&replaceAllMetadata=false&replaceAllImages=false&recursive=true",
-            method="POST",
-        )
-        req.add_header("X-Emby-Token", token)
-        req.add_header("Authorization", f'MediaBrowser Token="{token}"')  # Jellyfin 12 ya no acepta X-Emby-Token solo
         try:
-            with request.urlopen(req, timeout=20) as resp:
-                results.append({"name": name, "ok": True, "status": resp.status})
+            sc.server_call(
+                srv["url"],
+                f"/Items/{library_id}/Refresh?metadataRefreshMode=ValidationOnly&imageRefreshMode=ValidationOnly"
+                "&replaceAllMetadata=false&replaceAllImages=false&recursive=true",
+                token=srv["token"], method="POST", timeout=20,
+            )
+            results.append({"name": name, "ok": True, "status": 204})
         except HTTPError as exc:
             results.append({"name": name, "ok": False, "status": exc.code})
         except URLError as exc:
@@ -580,7 +616,7 @@ def refresh_servers(library_name: str) -> list[dict[str, Any]]:
     return results
 
 
-_poster_index_cache: dict[str, dict[str, Any]] = {}
+_poster_index_cache: dict[tuple[str, str], dict[str, Any]] = {}
 _poster_index_at: float = 0.0
 _poster_index_lock = threading.Lock()
 POSTER_INDEX_TTL = 600.0
@@ -591,15 +627,10 @@ def _fetch_poster_index_for(base: str, token: str) -> dict[tuple[str, str], dict
     matched by folder name rather than full path (Jellyfin/Emby may mount the
     same share at a different internal path than Kaimaku)."""
     out: dict[tuple[str, str], dict[str, Any]] = {}
-    req = request.Request(
-        base.rstrip("/") + "/Items?Recursive=true&IncludeItemTypes=Movie,Series"
-        "&Fields=Path&EnableImages=true&Limit=100000",
-        method="GET",
-    )
-    req.add_header("X-Emby-Token", token)
-    req.add_header("Authorization", f'MediaBrowser Token="{token}"')  # Jellyfin 12 ya no acepta X-Emby-Token solo
-    with request.urlopen(req, timeout=30) as resp:
-        payload = json.loads(resp.read())
+    payload = sc.server_call(
+        base, "/Items?Recursive=true&IncludeItemTypes=Movie,Series&Fields=Path&EnableImages=true&Limit=100000",
+        token=token, timeout=30,
+    ) or {}
     for entry in payload.get("Items") or []:
         raw_path = entry.get("Path")
         if not raw_path:
@@ -618,13 +649,9 @@ def poster_index() -> dict[tuple[str, str], dict[str, Any]]:
         if time.time() - _poster_index_at < POSTER_INDEX_TTL and _poster_index_cache:
             return _poster_index_cache
         merged: dict[tuple[str, str], dict[str, Any]] = {}
-        for _name, url_key, token_key in SERVERS:
-            token = os.environ.get(token_key, "").strip()
-            base = os.environ.get(url_key, "").strip()
-            if not token or not base:
-                continue
+        for srv in _servers():
             try:
-                merged.update(_fetch_poster_index_for(base, token))
+                merged.update(_fetch_poster_index_for(srv["url"], srv["token"]))
             except Exception:
                 continue
         _poster_index_cache = merged
@@ -632,11 +659,24 @@ def poster_index() -> dict[tuple[str, str], dict[str, Any]]:
         return merged
 
 
-def find_poster_ref(library: str, folder_name: str) -> dict[str, Any] | None:
+def reset_poster_index() -> None:
+    global _poster_index_at
+    with _poster_index_lock:
+        _poster_index_at = 0.0
+
+
+def find_poster_ref(root: Path, folder_name: str) -> dict[str, Any] | None:
     idx = poster_index()
-    entry = idx.get((library.lower(), folder_name.lower()))
-    if entry and entry.get("has_image"):
-        return entry
+    # El servidor puede llamar a la carpeta de la biblioteca distinto que aqui
+    # (/movies en Jellyfin, /host/pelis en Kaimaku): se prueban todos los nombres.
+    names = {root.name.lower()}
+    for info in library_ref(root)["servers"].values():
+        if info.get("location"):
+            names.add(Path(info["location"]).name.lower())
+    for library in names:
+        entry = idx.get((library, folder_name.lower()))
+        if entry and entry.get("has_image"):
+            return entry
     return None
 
 
@@ -649,13 +689,14 @@ def tg_escape(s: str) -> str:
 
 
 def notify_telegram(text: str) -> None:
-    if not TG_BOT_TOKEN or not TG_CHAT_ID:
+    bot_token, chat_id, topic_id = sc.setting("tg_bot_token"), sc.setting("tg_chat_id"), sc.setting("tg_topic_id")
+    if not bot_token or not chat_id:
         return
-    body: dict[str, str] = {"chat_id": TG_CHAT_ID, "text": text, "parse_mode": "HTML"}
-    if TG_TOPIC_ID:
-        body["message_thread_id"] = TG_TOPIC_ID
+    body: dict[str, str] = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
+    if topic_id:
+        body["message_thread_id"] = topic_id
     data = urlparse.urlencode(body).encode()
-    req = request.Request(f"https://api.telegram.org/bot{TG_BOT_TOKEN}/sendMessage", data=data, method="POST")
+    req = request.Request(f"https://api.telegram.org/bot{bot_token}/sendMessage", data=data, method="POST")
     try:
         request.urlopen(req, timeout=15)
     except Exception:
@@ -756,6 +797,8 @@ def run_install(job: Job, source: dict[str, Any] | None = None) -> None:
             backups.append(backup)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(staged, target)
+        adopt_owner(target.parent, destination)
+        adopt_owner(target, destination)
         installed.append({"asset": "audio", "target": safe_rel(target)})
         job_log(job, f"Audio instalado: {THEME_AUDIO}")
         update_item_state(item_id, audio_source=src_meta)
@@ -769,14 +812,16 @@ def run_install(job: Job, source: dict[str, Any] | None = None) -> None:
             backups.append(backup)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(staged, target)
+        adopt_owner(target.parent, destination)
+        adopt_owner(target, destination)
         installed.append({"asset": "video", "target": safe_rel(target)})
         job_log(job, f"Video instalado: {THEME_VIDEO}")
         update_item_state(item_id, video_source=src_meta)
 
     clear_review(item_id)
 
-    library_name = media_root_name(destination)
-    refresh = refresh_servers(library_name) if library_name and job.result.get("refresh", True) else []
+    root = root_for(destination)
+    refresh = refresh_servers(root) if root and job.result.get("refresh", True) else []
     job.result["refresh"] = refresh
     if job.assets and refresh:
         job_log(job, "Bibliotecas refrescadas")
@@ -803,9 +848,9 @@ def worker_loop() -> None:
             job_log(job, f"ERROR: {exc}")
             if job.result.get("installed"):
                 try:
-                    library_name = media_root_name(ensure_inside_roots(Path(job.destination)))
-                    if library_name and job.result.get("refresh", True):
-                        job.result["refresh"] = refresh_servers(library_name)
+                    root = root_for(ensure_inside_roots(Path(job.destination)))
+                    if root and job.result.get("refresh", True):
+                        job.result["refresh"] = refresh_servers(root)
                         job_log(job, "Bibliotecas refrescadas (instalación parcial)")
                 except Exception:
                     pass
@@ -858,9 +903,11 @@ def run_auto_scan(trigger: str = "schedule") -> dict[str, Any]:
         newly_review_names: list[str] = []
         error_names: list[str] = []
         touched_libraries: set[str] = set()
+        auto_assets = sc.setting("assets")
+        min_score = sc.setting("min_score")
 
         for item in media_items():
-            needed = [a for a in AUTO_ASSETS if not item.get(f"has_{a}")]
+            needed = [a for a in auto_assets if not item.get(f"has_{a}")]
             if not needed:
                 continue
             was_review = item["needs_review"]
@@ -879,7 +926,7 @@ def run_auto_scan(trigger: str = "schedule") -> dict[str, Any]:
             # aunque el candidato #2 o #3 hubiera funcionado perfectamente.
             # Tope de 3 intentos por item para que un item con muchos candidatos
             # empatados en el umbral no alargue el escaneo entero si todos fallan.
-            qualifying = [c for c in candidates if c["score"] >= AUTO_MIN_SCORE][:3]
+            qualifying = [c for c in candidates if c["score"] >= min_score][:3]
             installed_ok = False
             last_error: str | None = None
             for candidate in qualifying:
@@ -893,7 +940,7 @@ def run_auto_scan(trigger: str = "schedule") -> dict[str, Any]:
                     })
                     job.status = "done"
                     installed_names.append(f"{item['name']} ({round(candidate['score'] * 100)}%)")
-                    touched_libraries.add(item["library"])
+                    touched_libraries.add(item["root"])
                     emit_event({"type": "scan_progress", "item": item["name"], "outcome": "installed"})
                     installed_ok = True
                     break
@@ -935,8 +982,8 @@ def run_auto_scan(trigger: str = "schedule") -> dict[str, Any]:
                     newly_review_names.append(item["name"])
                 emit_event({"type": "scan_progress", "item": item["name"], "outcome": "review"})
 
-        for library in touched_libraries:
-            refresh_servers(library)
+        for root in touched_libraries:
+            refresh_servers(Path(root))
 
         summary = {
             "trigger": trigger,
@@ -975,13 +1022,19 @@ def run_auto_scan(trigger: str = "schedule") -> dict[str, Any]:
 
 
 def auto_scan_loop() -> None:
+    """Relee el intervalo cada minuto: si se cambia en la web se aplica sin
+    reiniciar. 0 = escaneo automatico desactivado."""
     time.sleep(120)  # let the app + yt-dlp warm up before the first pass
+    last_run = 0.0
     while True:
-        try:
-            run_auto_scan(trigger="schedule")
-        except Exception:
-            pass
-        time.sleep(max(1.0, AUTO_SCAN_INTERVAL_HOURS) * 3600)
+        interval = sc.setting("scan_interval_hours")
+        if interval > 0 and current_media_roots() and time.time() - last_run >= max(1.0, interval) * 3600:
+            last_run = time.time()
+            try:
+                run_auto_scan(trigger="schedule")
+            except Exception:
+                pass
+        time.sleep(60)
 
 
 # ---------------------------------------------------------------------------
@@ -1031,17 +1084,24 @@ def get_library() -> dict[str, Any]:
     return {"roots": [safe_rel(p) for p in current_media_roots()], "libraries": libraries, "items": items}
 
 
+@app.get("/api/health")
+def health() -> dict[str, Any]:
+    return {"ok": True, "version": sc.VERSION}
+
+
 @app.get("/api/status")
 def get_status() -> dict[str, Any]:
     return {
+        "version": sc.VERSION,
         "roots": roots_status(),
-        "jellyfin": server_status("JELLYFIN_URL", "JELLYFIN_API_KEY"),
-        "emby": server_status("EMBY_URL", "EMBY_API_KEY"),
-        "telegram": bool(TG_BOT_TOKEN and TG_CHAT_ID),
+        "servers": servers_status(),
+        "mounts": sc.mount_status(),
+        "running_as": "root (dueño automático)" if os.geteuid() == 0 else f"{os.geteuid()}:{os.getegid()}",
+        "telegram": bool(sc.setting("tg_bot_token") and sc.setting("tg_chat_id")),
         "auto_scan": {
-            "interval_hours": AUTO_SCAN_INTERVAL_HOURS,
-            "min_score": AUTO_MIN_SCORE,
-            "assets": AUTO_ASSETS,
+            "interval_hours": sc.setting("scan_interval_hours"),
+            "min_score": sc.setting("min_score"),
+            "assets": sc.setting("assets"),
             **asdict(scan_state),
         },
     }
@@ -1050,10 +1110,10 @@ def get_status() -> dict[str, Any]:
 @app.get("/api/poster")
 def get_poster(item: str):
     path = ensure_inside_roots(Path(item))
-    library = media_root_name(path)
-    if not library:
+    root = root_for(path)
+    if not root:
         raise HTTPException(status_code=404, detail="not found")
-    ref = find_poster_ref(library, path.name)
+    ref = find_poster_ref(root, path.name)
     if not ref:
         raise HTTPException(status_code=404, detail="no poster")
     url = ref["base"].rstrip("/") + f"/Items/{ref['id']}/Images/Primary?maxWidth=480&quality=90"
@@ -1194,6 +1254,141 @@ def trigger_scan() -> dict[str, Any]:
 @app.get("/api/scan/status")
 def scan_status() -> dict[str, Any]:
     return {"scan": asdict(scan_state)}
+
+
+# ---------------------------------------------------------------------------
+# Asistente de configuracion (web)
+# ---------------------------------------------------------------------------
+
+class LoginRequest(BaseModel):
+    url: str
+    username: str = ""
+    password: str = ""
+    api_key: str = ""
+
+
+class ForgetRequest(BaseModel):
+    kind: Literal["jellyfin", "emby"]
+
+
+class SaveSetupRequest(BaseModel):
+    libraries: list[dict[str, Any]] | None = None  # None = no tocar las bibliotecas (solo ajustes)
+    settings: dict[str, Any] = Field(default_factory=dict)
+
+
+def _public_settings() -> dict[str, Any]:
+    out = {k: sc.setting(k) for k in sc.DEFAULT_SETTINGS}
+    if out.get("tg_bot_token"):
+        out["tg_bot_token"] = "••••••" + out["tg_bot_token"][-4:]
+    out["locked"] = [k for k in sc.DEFAULT_SETTINGS if sc.setting_locked(k)]
+    return out
+
+
+@app.get("/api/setup/state")
+def setup_state() -> dict[str, Any]:
+    cfg = sc.load_config()
+    mounts = sc.mount_status()
+    legacy = [safe_rel(p) for p in discover_media_roots()] if not configured_libraries() else []
+    if mounts["host"]["mounted"]:
+        sc.warm_index_async()  # el asistente lo va a necesitar en unos segundos
+    return {
+        "version": sc.VERSION,
+        "needs_setup": not current_media_roots(),
+        "mode": "web" if configured_libraries() else ("media" if legacy or _explicit_media_roots else "none"),
+        "mounts": mounts,
+        "servers": [{k: v for k, v in s.items() if k != "token"} for s in sc.configured_servers()],
+        "libraries": cfg["libraries"],
+        "legacy_roots": legacy,
+        "settings": _public_settings(),
+    }
+
+
+@app.get("/api/setup/discover")
+def setup_discover() -> dict[str, Any]:
+    return {"servers": sc.discover_servers()}
+
+
+@app.post("/api/setup/login")
+def setup_login(req: LoginRequest) -> dict[str, Any]:
+    try:
+        if req.api_key.strip():
+            server = sc.login_with_key(req.url, req.api_key.strip())
+        else:
+            if not req.username.strip():
+                raise ValueError("Escribe el usuario administrador de tu Jellyfin/Emby.")
+            server = sc.login(req.url, req.username.strip(), req.password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    reset_poster_index()
+    return {"server": server}
+
+
+@app.post("/api/setup/forget")
+def setup_forget(req: ForgetRequest) -> dict[str, Any]:
+    sc.forget_server(req.kind)
+    reset_poster_index()
+    return {"ok": True}
+
+
+@app.post("/api/setup/map")
+def setup_map() -> dict[str, Any]:
+    if not sc.configured_servers():
+        raise HTTPException(status_code=400, detail="Conecta antes tu Jellyfin o Emby.")
+    if not sc.search_roots():
+        raise HTTPException(status_code=400, detail="Kaimaku no ve ninguna carpeta montada en /host. Revisa la línea del volumen.")
+    return sc.map_libraries()
+
+
+@app.get("/api/setup/browse")
+def setup_browse(path: str = "") -> dict[str, Any]:
+    try:
+        return sc.browse(path or None)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/setup/save")
+def setup_save(req: SaveSetupRequest) -> dict[str, Any]:
+    cfg = sc.load_config()
+    libraries: list[dict[str, Any]] = [] if req.libraries is not None else list(cfg["libraries"])
+    seen: set[str] = set()
+    for lib in req.libraries or []:
+        raw = str(lib.get("path") or "")
+        path = sc.allowed_path(raw)
+        if not path or not path.is_dir():
+            raise HTTPException(status_code=400, detail=f"La carpeta «{raw}» no existe dentro de lo montado en Kaimaku.")
+        key = safe_rel(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        servers = {}
+        for kind, info in (lib.get("servers") or {}).items():
+            if kind in ("jellyfin", "emby") and isinstance(info, dict):
+                servers[kind] = {k: str(info.get(k) or "") for k in ("id", "location", "library")}
+        libraries.append({
+            "path": key,
+            "label": str(lib.get("label") or path.name)[:80],
+            "type": str(lib.get("type") or ""),
+            "servers": servers,
+            "enabled": bool(lib.get("enabled", True)),
+        })
+    settings = dict(cfg.get("settings") or {})
+    for key, value in (req.settings or {}).items():
+        if key not in sc.DEFAULT_SETTINGS or sc.setting_locked(key):
+            continue
+        if key == "scan_interval_hours":
+            settings[key] = max(0.0, min(168.0, float(value or 0)))
+        elif key == "min_score":
+            settings[key] = max(0.3, min(1.0, float(value or 0.75)))
+        elif key == "assets":
+            settings[key] = [a for a in (value or []) if a in ("audio", "video")] or ["audio", "video"]
+        elif key == "tg_bot_token" and str(value).startswith("••••"):
+            continue  # el valor enmascarado que mostramos: no se ha cambiado
+        else:
+            settings[key] = str(value or "").strip()
+    sc.save_config({**cfg, "libraries": libraries, "settings": settings})
+    reset_poster_index()
+    return {"ok": True, "roots": [safe_rel(p) for p in current_media_roots()], "items": len(media_items())}
 
 
 @app.get("/api/events")

@@ -29,6 +29,7 @@
         <button id="activityBtn" class="iconBtn" title="Actividad" aria-label="Actividad">
           🕘<span id="activityBadge" class="badge" hidden>0</span>
         </button>
+        <button id="setupBtn" class="iconBtn" title="Configurar (servidor, bibliotecas, ajustes)" aria-label="Configurar">🛠</button>
         <button id="statusBtn" class="iconBtn" title="Diagnóstico" aria-label="Diagnóstico">⚙</button>
       </div>
     </header>
@@ -46,6 +47,12 @@
     <main class="gridWrap">
       <div id="emptyState" class="emptyState" hidden>
         <p>No hay nada que coincida con este filtro.</p>
+      </div>
+      <div id="welcomeState" class="emptyState welcome" hidden>
+        <p class="welcomeMark">開幕</p>
+        <h2>Bienvenido a Kaimaku</h2>
+        <p>Conecta tu Jellyfin o Emby y Kaimaku encontrará solo tus bibliotecas.</p>
+        <button id="welcomeBtn" class="primary" type="button">Empezar</button>
       </div>
       <div id="grid" class="grid"></div>
     </main>
@@ -122,8 +129,26 @@
       <div class="modal" role="dialog" aria-modal="true" aria-labelledby="statusModalTitle">
         <button id="statusModalClose" class="drawerClose" aria-label="Cerrar">✕</button>
         <h2 id="statusModalTitle">Diagnóstico</h2>
-        <p class="hint">Qué ha encontrado Kaimaku exactamente. Si algo falla, aquí ves qué tocar en el <code>docker-compose.yml</code>.</p>
+        <p class="hint">Qué ha encontrado Kaimaku exactamente. Para cambiar servidor, bibliotecas o ajustes usa el botón 🛠.</p>
         <div id="statusModalBody" class="modalBody"></div>
+      </div>
+    </div>
+
+    <!-- Setup wizard -->
+    <div id="setupModal" class="overlay centered" hidden>
+      <div class="modal wizard" role="dialog" aria-modal="true" aria-label="Configurar Kaimaku">
+        <button id="setupClose" class="drawerClose" aria-label="Cerrar">✕</button>
+        <ol id="wizSteps" class="wizSteps">
+          <li data-step="1"><span>1</span> Servidor</li>
+          <li data-step="2"><span>2</span> Bibliotecas</li>
+          <li data-step="3"><span>3</span> Listo</li>
+        </ol>
+        <div id="wizBody" class="wizBody"></div>
+        <div class="wizNav">
+          <button id="wizBack" class="ghostBtn" type="button">← Atrás</button>
+          <span id="wizMsg" class="message"></span>
+          <button id="wizNext" class="primary" type="button">Siguiente →</button>
+        </div>
       </div>
     </div>
 

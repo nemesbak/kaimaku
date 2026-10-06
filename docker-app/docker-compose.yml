@@ -3,61 +3,20 @@ services:
     image: nemesbak/kaimaku:latest
     container_name: kaimaku
     ports:
-      - "8098:8098"   # <-- puerto donde abrirás Kaimaku: http://IP-DEL-SERVIDOR:8098
-    environment:
-      # Usuario con el que Kaimaku crea las carpetas theme-music/ y backdrops/
-      # (nunca root). Pon el mismo dueño que tienen tus medios:
-      #   Unraid: 99 / 100 · Synology/TrueNAS/Linux: el de `id tuusuario` (suele ser 1000 / 1000)
-      PUID: "1000"
-      PGID: "1000"
-      # No hace falta tocar nada aquí: Kaimaku detecta solo cada subcarpeta que
-      # encuentre dentro de /media (anime/, series/, peliculas/... con el
-      # nombre que sea) y la trata como una biblioteca. Solo rellena
-      # MEDIA_ROOTS si quieres limitarlo a carpetas concretas (separadas por
-      # comas, rutas DENTRO del contenedor, ej: "/media/anime,/media/series").
-      MEDIA_ROOTS: ""
-      DATA_DIR: "/data"
-      # Jellyfin/Emby son opcionales: sin API key, todo funciona igual pero se
-      # omiten los pósters y el refresco automático de biblioteca tras
-      # instalar. host.docker.internal apunta al propio host Docker (sirve si
-      # Jellyfin/Emby corren en el mismo host o como contenedores normales, no
-      # en otra máquina de tu red — en ese caso pon su IP real). API key:
-      # Panel de control de Jellyfin/Emby → Avanzado → API Keys → Nueva clave.
-      JELLYFIN_URL: "http://host.docker.internal:8096"
-      JELLYFIN_API_KEY: ""
-      EMBY_URL: "http://host.docker.internal:8097"
-      EMBY_API_KEY: ""
-      # Kaimaku escanea la biblioteca solo cada X horas: instala directamente
-      # lo que encuentre con confianza suficiente (AUTO_MIN_SCORE) y deja el
-      # resto marcado como "revisión" en la propia web para que elijas tú.
-      AUTO_SCAN_INTERVAL_HOURS: "12"
-      AUTO_MIN_SCORE: "0.75"
-      AUTO_ASSETS: "audio,video"
-      # Opcional: aviso por Telegram con el resumen de cada escaneo
-      # automático (solo si instaló algo, dejó algo a revisión o falló algo —
-      # nunca si no había nada que hacer). Vacío = desactivado.
-      TG_BOT_TOKEN: ""
-      TG_CHAT_ID: ""
-      TG_TOPIC_ID: ""
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      - "8098:8098"   # abre Kaimaku en http://IP-DE-TU-SERVIDOR:8098
     volumes:
-      # <-- CAMBIA ESTA (es el ÚNICO cambio necesario para instalar Kaimaku):
-      # la ruta REAL de tu biblioteca en el host, la carpeta que POR DENTRO
-      # contiene anime/, series/, peliculas/... (los nombres que sean, no hace
-      # falta que coincidan con nada). Ejemplos según dónde corra esto:
-      #   Unraid:   /mnt/user/datos/media
-      #   Synology: /volume1/media
-      #   TrueNAS:  /mnt/pool/media
-      #   Linux:    /home/usuario/media
-      # ¿Dudas de cuál es? Entra por SSH/terminal y ejecuta `ls RUTA`: si ahí ves
-      # tus carpetas anime/series/peliculas, es la correcta. Si te equivocas, la
-      # propia app te avisará al abrirla (botón "⚙ Diagnóstico").
-      - /mnt/user/datos/media:/media
-      # Carpeta pequeña para el estado (qué está instalado, qué queda a
-      # revisión), backups y descargas en curso. No hace falta tocarla.
+      # La carpeta GRANDE donde guardas tus series y películas. No hace falta
+      # afinar: Kaimaku encuentra solo tus bibliotecas dentro. Cambia solo la
+      # parte de la IZQUIERDA de los dos puntos según tu sistema:
+      #   Unraid:        /mnt/user
+      #   Synology:      /volume1
+      #   TrueNAS / OMV: /mnt
+      #   Linux:         /home  (o la carpeta donde tengas tus medios)
+      #   Windows:       D:/    (la unidad de tus medios, con Docker Desktop)
+      - /mnt/user:/host
+      # Configuración y estado de Kaimaku. No hace falta tocarla.
       - ./data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # para encontrar tu Jellyfin/Emby en este mismo equipo
     restart: unless-stopped
-    # Jobs en curso viven en memoria; en el apagado se espera hasta 25s a que
-    # termine una descarga activa antes de salir. Mantén esto por encima.
-    stop_grace_period: 30s
+    stop_grace_period: 30s   # deja terminar una descarga en curso al parar
