@@ -232,7 +232,13 @@ GENERIC_QUERY_TEMPLATES = [
 ]
 
 ANIME_LIBRARY_HINTS = ("anime", "animacion")
-OFFICIAL_CHANNEL_TERMS = ("crunchyroll", "vizmedia", "aniplex", "toho", "netflix anime", "muse asia", "funimation")
+# Solo plataformas que suben cabeceras/openings reales. Los canales de estudios
+# (Warner, Sony, Paramount, Disney Channel...) suben sobre todo trailers, spots
+# de 15-30 s y videoclips: probado 2026-10-06, darles bonus colaba eso como tema.
+OFFICIAL_CHANNEL_TERMS = (
+    "crunchyroll", "vizmedia", "aniplex", "toho", "netflix", "muse asia", "funimation",
+    "prime video", "hbo", "apple tv",
+)
 
 
 def is_anime_library(library_name: str | None) -> bool:
@@ -247,30 +253,77 @@ def build_auto_queries(name: str, anime: bool = True) -> list[str]:
     return [t.format(title=name) for t in templates]
 
 
-def score_auto_candidate(name: str, year: int | None, video: dict[str, Any]) -> float:
+# Terminos ya normalizados (sin tildes, minusculas). Se comparan por palabra
+# completa con has_term(): antes era substring y "op " o "pv" casaban dentro
+# de cualquier palabra.
+THEME_TERMS = ("opening", "op", "theme", "pv", "tema", "intro", "soundtrack", "banda sonora", "main title", "main titles")
+# Mas especificos que "theme": casi siempre son la cabecera real, no una pista suelta de la BSO.
+TITLE_SEQUENCE_TERMS = ("opening credits", "title sequence", "main title", "main titles", "main theme", "creditless", "cabecera")
+SPAIN_TERMS = ("castellano", "espana", "spain")
+SPANISH_TERMS = ("espanol", "spanish")
+LATINO_TERMS = ("latino", "latin spanish", "latinoamerica", "latam", "mexico")
+# Subtitulos/letra en espanol != audio en espanol (2026-10-06: "Mire Kay -
+# Industry (Sub Espanol / Lyrics) | DARK" llego a 1.0 por esto).
+SUBS_TERMS = ("sub", "sub espanol", "subtitulado", "subtitulada", "lyrics", "letra", "traducida", "traducido")
+OFFICIAL_TITLE_TERMS = ("official", "oficial", "crunchyroll", "aniplex", "toho")
+JUNK_TERMS = (
+    "reaction", "cover", "piano", "amv", "nightcore", "review", "trailer", "teaser", "clip", "escena", "scene",
+    "completa", "full movie", "pelicula completa", "fandub", "shorts", "parody", "parodia", "fanmade", "fan made",
+    "spot", "tv spot", "anuncio", "avance", "promo", "featurette", "videoclip", "making of", "como se hizo", "behind the scenes",
+    "style", "homage", "reimagined", "fan edit",
+)
+SEASON_RE = re.compile(r"\b(?:season|temporada|s)\s?0*([2-9]|\d{2})\b")
+YEAR_RE = re.compile(r"\b(19\d{2}|20\d{2})\b")
+
+
+def has_term(text: str, terms: tuple[str, ...]) -> bool:
+    return any(re.search(r"\b" + re.escape(term) + r"\b", text) for term in terms)
+
+
+def score_auto_candidate(name: str, year: int | None, video: dict[str, Any], anime: bool = True) -> float:
     title = normalize(video.get("title") or "")
     channel = normalize(video.get("uploader") or video.get("channel") or "")
     item_name = normalize(name)
     score = 0.0
-    if item_name and item_name in title:
-        score += 0.35
-    if any(term in title for term in ("opening", "op ", "theme", "pv", "tema", "intro", "soundtrack", "banda sonora")):
+    if item_name and re.search(r"\b" + re.escape(item_name) + r"\b", title):
+        # Nombres cortos/genericos ("Industry", "Ted 2") aparecen dentro de
+        # titulos de cualquier cosa: solo puntuan del todo si el video EMPIEZA
+        # por el nombre; si no, cuentan poco.
+        generic = len(item_name.split()) <= 2 and len(item_name) <= 12
+        score += 0.35 if (not generic or title.startswith(item_name)) else 0.15
+    if has_term(title, THEME_TERMS):
         score += 0.25
-    if any(term in title for term in ("español", "espanol", "castellano", "spanish", "latino")):
+    if has_term(title, TITLE_SEQUENCE_TERMS):
+        score += 0.10
+    subs = has_term(title, SUBS_TERMS)
+    if has_term(title, LATINO_TERMS) or has_term(channel, LATINO_TERMS):
+        score -= 0.15  # se prefiere castellano; latino solo si no hay nada mejor
+    elif subs:
+        score -= 0.05
+    elif has_term(title, SPAIN_TERMS):
         score += 0.18
-    if any(term in title for term in ("official", "crunchyroll", "aniplex", "toho", "netflix", "oficial")):
+    elif has_term(title, SPANISH_TERMS):
+        score += 0.10
+    if has_term(title, OFFICIAL_TITLE_TERMS):
         score += 0.15
+    # "Netflix"/"Prime" en el TITULO no prueban nada (cualquiera lo escribe);
+    # solo cuenta si el canal es el oficial.
     if any(term in channel for term in OFFICIAL_CHANNEL_TERMS):
         score += 0.20
-    if year and str(year) in title:
+    title_years = {int(y) for y in YEAR_RE.findall(title)}
+    if year and year in title_years:
         score += 0.05
+    elif year and any(y < year - 1 for y in title_years):
+        score -= 0.25  # obra anterior con el mismo nombre (Spartacus 2010 vs Kubrick 1960)
+    if SEASON_RE.search(title):
+        score -= 0.05  # a igualdad, mejor el opening original que el de una temporada posterior
     duration = video.get("duration") or 0
     if duration and duration <= 360:
         score += 0.10
     if duration and duration > 360:
         score -= 0.25
-    if any(term in title for term in ("reaction", "cover", "piano", "amv", "nightcore", "review", "trailer", "tráiler")):
-        score -= 0.30
+    if has_term(title, JUNK_TERMS) or (not anime and has_term(title, ("anime",))):
+        score -= 0.30  # "anime opening" fuera de una biblioteca de anime = fan-made ("Cars 3 Anime Opening")
     return max(0.0, min(1.0, score))
 
 
@@ -434,7 +487,7 @@ def auto_search_candidates(destination: Path, limit: int = 8) -> tuple[str, int 
                         "thumbnail": thumbnail,
                         "webpage_url": video.get("webpage_url") or video.get("url") or f"https://www.youtube.com/watch?v={video_id}",
                         "embed_url": f"https://www.youtube.com/embed/{video_id}",
-                        "score": round(score_auto_candidate(name, year, video), 3),
+                        "score": round(score_auto_candidate(name, year, video, anime), 3),
                         "query": query,
                     }
                 )
