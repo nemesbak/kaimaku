@@ -205,25 +205,43 @@ def clear_review(item_id: str) -> None:
 VIDEO_EXT = {".mkv", ".mp4", ".avi", ".mov", ".m4v", ".ts"}
 
 
+def _scandir(path: Path | str) -> list[os.DirEntry[str]]:
+    with os.scandir(path) as it:
+        return list(it)
+
+
 def media_items() -> list[dict[str, Any]]:
+    # os.scandir en vez de iterdir()+is_dir()/is_file(): DirEntry ya trae el
+    # tipo, y en el array de Unraid (shfs) cada stat cuesta. Con ~2700 items
+    # /api/library bajo de ~5 s a lo que tarda listar las carpetas.
     items: list[dict[str, Any]] = []
+    wanted = sc.setting("assets")
     for root in current_media_roots():
         if not root.exists():
             continue
         try:
-            children = sorted(p for p in root.iterdir() if p.is_dir())
+            resolved_root = root.resolve()
+            children = sorted((e for e in _scandir(root) if e.is_dir()), key=lambda e: e.name)
         except OSError:
             continue
         label = library_ref(root)["label"]
-        for child in children:
-            if child.name.startswith("_"):
+        for entry in children:
+            if entry.name.startswith("_"):
                 continue
+            child = Path(entry.path)
             try:
-                kind = "movie" if any(p.is_file() and p.suffix.lower() in VIDEO_EXT for p in child.iterdir()) else "series"
+                inner = _scandir(child)
             except OSError:
                 continue
-            item_id = safe_rel(child.resolve())
+            kind = "movie" if any(e.is_file() and os.path.splitext(e.name)[1].lower() in VIDEO_EXT for e in inner) else "series"
+            subdirs = {e.name for e in inner if e.is_dir()}
+            item_id = safe_rel(child.resolve() if entry.is_symlink() else resolved_root / entry.name)
             state = item_state(item_id)
+            has_audio = THEME_AUDIO.parent.name in subdirs and (child / THEME_AUDIO).is_file()
+            has_video = THEME_VIDEO.parent.name in subdirs and (child / THEME_VIDEO).is_file()
+            # La marca de revision se queda guardada aunque los temas lleguen por
+            # otra via (a mano, otro programa): si ya no falta nada, no cuenta.
+            missing = any(not {"audio": has_audio, "video": has_video}[a] for a in wanted)
             items.append(
                 {
                     "id": item_id,
@@ -232,9 +250,9 @@ def media_items() -> list[dict[str, Any]]:
                     "root": safe_rel(root),
                     "library": label,
                     "kind": kind,
-                    "has_audio": (child / THEME_AUDIO).is_file(),
-                    "has_video": (child / THEME_VIDEO).is_file(),
-                    "needs_review": bool(state.get("needs_review")),
+                    "has_audio": has_audio,
+                    "has_video": has_video,
+                    "needs_review": bool(state.get("needs_review")) and missing,
                     "last_scanned": state.get("last_scanned"),
                     "last_error": state.get("last_error"),
                     "audio_source": state.get("audio_source"),
@@ -976,6 +994,13 @@ def run_auto_scan(trigger: str = "schedule") -> dict[str, Any]:
             # Tope de 3 intentos por item para que un item con muchos candidatos
             # empatados en el umbral no alargue el escaneo entero si todos fallan.
             qualifying = [c for c in candidates if c["score"] >= min_score][:3]
+            # Solo falta el video y se sabe de que video salio el audio: ese va
+            # primero, para que audio e intro sean la misma pieza.
+            audio_src = item.get("audio_source") or {}
+            if needed == ["video"] and audio_src.get("url"):
+                same = {"id": audio_src.get("id"), "title": audio_src.get("title"),
+                        "uploader": audio_src.get("uploader"), "webpage_url": audio_src["url"], "score": 1.0}
+                qualifying = [same] + [c for c in qualifying if c["webpage_url"] != audio_src["url"]][:2]
             installed_ok = False
             last_error: str | None = None
             for candidate in qualifying:
@@ -997,6 +1022,7 @@ def run_auto_scan(trigger: str = "schedule") -> dict[str, Any]:
                 except Exception as exc:
                     job.status = "failed"
                     last_error = str(exc)
+                    job_log(job, f"ERROR: {exc}")  # que se vea en Actividad, no solo en state.json
                     emit_event({"type": "scan_progress", "item": item["name"], "outcome": "error", "detail": last_error})
 
             if installed_ok:
