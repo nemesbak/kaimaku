@@ -105,6 +105,14 @@ def now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
+def _ts(iso: str | None) -> float:
+    """Fecha ISO guardada en state.json -> epoch (0 si falta o no se entiende)."""
+    try:
+        return datetime.fromisoformat(iso).timestamp() if iso else 0.0
+    except ValueError:
+        return 0.0
+
+
 def clean_name(value: str) -> str:
     value = re.sub(r"[\\/:*?\"<>|]+", " ", value)
     return re.sub(r"\s+", " ", value).strip() or "unknown"
@@ -468,6 +476,24 @@ def download_video(job_id: str, url: str, target: Path, log: Any) -> None:
     found[-1].replace(target)
 
 
+BACKUP_KEEP_DAYS = 30
+
+
+def prune_backups() -> None:
+    """Las copias de temas sustituidos solo sirven para deshacer un cambio reciente."""
+    limit = time.time() - BACKUP_KEEP_DAYS * 86400
+    try:
+        dirs = list(BACKUP_DIR.iterdir())
+    except OSError:
+        return
+    for d in dirs:
+        try:
+            if d.is_dir() and d.stat().st_mtime < limit:
+                shutil.rmtree(d, ignore_errors=True)
+        except OSError:
+            continue
+
+
 def backup_existing(target: Path, item_dir: Path) -> str | None:
     if not target.exists():
         return None
@@ -742,16 +768,37 @@ class Job:
 
 jobs: dict[str, Job] = {}
 job_queue: "queue.Queue[str]" = queue.Queue()
-event_subscribers: list[asyncio.Queue[str]] = []
+# (bucle de asyncio, cola) de cada cliente SSE. emit_event se llama desde hilos
+# (worker, escaneo): asyncio.Queue no es thread-safe y un put_nowait directo no
+# despierta al cliente hasta el siguiente evento del bucle.
+event_subscribers: list[tuple[asyncio.AbstractEventLoop, asyncio.Queue[str]]] = []
+MAX_FINISHED_JOBS = 300
+
+
+def _put_event(q: asyncio.Queue[str], data: str) -> None:
+    try:
+        q.put_nowait(data)
+    except asyncio.QueueFull:
+        pass
 
 
 def emit_event(payload: dict[str, Any]) -> None:
     data = json.dumps(payload, ensure_ascii=False)
-    for subscriber in list(event_subscribers):
+    for loop, subscriber in list(event_subscribers):
         try:
-            subscriber.put_nowait(data)
-        except asyncio.QueueFull:
+            loop.call_soon_threadsafe(_put_event, subscriber, data)
+        except RuntimeError:  # bucle cerrado
             pass
+
+
+def prune_jobs() -> None:
+    """Cada intento del escaneo crea un Job: sin esto se acumulan en memoria para siempre."""
+    finished = [j for j in jobs.values() if j.status not in ("queued", "running")]
+    if len(finished) <= MAX_FINISHED_JOBS:
+        return
+    finished.sort(key=lambda j: j.updated_at)
+    for job in finished[: len(finished) - MAX_FINISHED_JOBS]:
+        jobs.pop(job.id, None)
 
 
 def job_log(job: Job, message: str) -> None:
@@ -788,25 +835,19 @@ def run_install(job: Job, source: dict[str, Any] | None = None) -> None:
     }
     src_meta = {**src_meta, "installed_at": now_iso()}
 
-    if "audio" in job.assets:
-        staged = work / "song1.mp3"
-        download_audio(job.id, job.url, staged, lambda m: job_log(job, m))
-        target = destination / THEME_AUDIO
-        backup = backup_existing(target, destination)
-        if backup:
-            backups.append(backup)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(staged, target)
-        adopt_owner(target.parent, destination)
-        adopt_owner(target, destination)
-        installed.append({"asset": "audio", "target": safe_rel(target)})
-        job_log(job, f"Audio instalado: {THEME_AUDIO}")
-        update_item_state(item_id, audio_source=src_meta)
+    # Primero se descarga TODO a work/ y solo despues se instala: si el video
+    # falla tras bajar el audio, no queda un audio instalado a medias que el
+    # siguiente candidato del escaneo machacaria (audio de un video, intro de otro).
+    plan = [
+        ("audio", THEME_AUDIO, "Audio", download_audio, work / "song1.mp3"),
+        ("video", THEME_VIDEO, "Video", download_video, work / "intro.mp4"),
+    ]
+    plan = [p for p in plan if p[0] in job.assets]
+    for _asset, _rel, _label, download, staged in plan:
+        download(job.id, job.url, staged, lambda m: job_log(job, m))
 
-    if "video" in job.assets:
-        staged = work / "intro.mp4"
-        download_video(job.id, job.url, staged, lambda m: job_log(job, m))
-        target = destination / THEME_VIDEO
+    for asset, rel, label, _download, staged in plan:
+        target = destination / rel
         backup = backup_existing(target, destination)
         if backup:
             backups.append(backup)
@@ -814,9 +855,9 @@ def run_install(job: Job, source: dict[str, Any] | None = None) -> None:
         shutil.copy2(staged, target)
         adopt_owner(target.parent, destination)
         adopt_owner(target, destination)
-        installed.append({"asset": "video", "target": safe_rel(target)})
-        job_log(job, f"Video instalado: {THEME_VIDEO}")
-        update_item_state(item_id, video_source=src_meta)
+        installed.append({"asset": asset, "target": safe_rel(target)})
+        job_log(job, f"{label} instalado: {rel}")
+        update_item_state(item_id, **{f"{asset}_source": src_meta})
 
     clear_review(item_id)
 
@@ -866,6 +907,7 @@ def worker_loop() -> None:
 def _enqueue(url: str, destination: str, assets: list[str], refresh: bool) -> Job:
     job = Job(id=uuid.uuid4().hex[:12], url=url, destination=destination, assets=list(assets))
     job.result["refresh"] = refresh
+    prune_jobs()
     jobs[job.id] = job
     job_queue.put(job.id)
     emit_event({"type": "job", "job": asdict(job)})
@@ -889,6 +931,7 @@ class ScanState:
 
 scan_state = ScanState()
 scan_lock = threading.Lock()
+REVIEW_RECHECK_DAYS = 7
 
 
 def run_auto_scan(trigger: str = "schedule") -> dict[str, Any]:
@@ -906,11 +949,17 @@ def run_auto_scan(trigger: str = "schedule") -> dict[str, Any]:
         auto_assets = sc.setting("assets")
         min_score = sc.setting("min_score")
 
+        recheck_before = time.time() - REVIEW_RECHECK_DAYS * 86400
         for item in media_items():
             needed = [a for a in auto_assets if not item.get(f"has_{a}")]
             if not needed:
                 continue
             was_review = item["needs_review"]
+            # Lo que ya esta en revision casi nunca cambia de un escaneo a otro:
+            # buscarlo cada 12 h eran ~9000 busquedas por pasada (13 h seguidas
+            # y 403 de YouTube). Se vuelve a mirar una vez por semana.
+            if was_review and _ts(item.get("last_scanned")) > recheck_before:
+                continue
             try:
                 _, _, candidates = auto_search_candidates(Path(item["path"]))
             except Exception as exc:
@@ -932,6 +981,7 @@ def run_auto_scan(trigger: str = "schedule") -> dict[str, Any]:
             for candidate in qualifying:
                 job = Job(id=uuid.uuid4().hex[:12], url=candidate["webpage_url"], destination=item["path"], assets=needed)
                 job.result["refresh"] = False  # batched at the end of the whole scan instead
+                prune_jobs()
                 jobs[job.id] = job
                 try:
                     run_install(job, source={
@@ -984,6 +1034,7 @@ def run_auto_scan(trigger: str = "schedule") -> dict[str, Any]:
 
         for root in touched_libraries:
             refresh_servers(Path(root))
+        prune_backups()
 
         summary = {
             "trigger": trigger,
@@ -994,6 +1045,9 @@ def run_auto_scan(trigger: str = "schedule") -> dict[str, Any]:
         }
         scan_state.last_finished = now_iso()
         scan_state.last_summary = summary
+        with _state_lock:
+            _state["last_scan_finished"] = scan_state.last_finished
+            save_state()
         emit_event({"type": "scan", "scan": asdict(scan_state)})
 
         if installed_names or newly_review_names or error_names:
@@ -1025,7 +1079,10 @@ def auto_scan_loop() -> None:
     """Relee el intervalo cada minuto: si se cambia en la web se aplica sin
     reiniciar. 0 = escaneo automatico desactivado."""
     time.sleep(120)  # let the app + yt-dlp warm up before the first pass
-    last_run = 0.0
+    # Desde el ultimo escaneo terminado (persistido): reiniciar el contenedor ya
+    # no lanza una pasada completa nueva si la anterior fue hace un rato.
+    with _state_lock:
+        last_run = _ts(_state.get("last_scan_finished"))
     while True:
         interval = sc.setting("scan_interval_hours")
         if interval > 0 and current_media_roots() and time.time() - last_run >= max(1.0, interval) * 3600:
@@ -1059,6 +1116,7 @@ def startup() -> None:
     shutil.rmtree(WORK_DIR, ignore_errors=True)
     WORK_DIR.mkdir(parents=True, exist_ok=True)
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    prune_backups()
     threading.Thread(target=worker_loop, daemon=True).start()
     threading.Thread(target=auto_scan_loop, daemon=True).start()
 
@@ -1394,7 +1452,8 @@ def setup_save(req: SaveSetupRequest) -> dict[str, Any]:
 @app.get("/api/events")
 async def events() -> StreamingResponse:
     q: asyncio.Queue[str] = asyncio.Queue(maxsize=200)
-    event_subscribers.append(q)
+    sub = (asyncio.get_running_loop(), q)
+    event_subscribers.append(sub)
 
     async def stream():
         try:
@@ -1403,6 +1462,6 @@ async def events() -> StreamingResponse:
                 data = await q.get()
                 yield f"event: message\ndata: {data}\n\n"
         finally:
-            event_subscribers.remove(q)
+            event_subscribers.remove(sub)
 
     return StreamingResponse(stream(), media_type="text/event-stream")
