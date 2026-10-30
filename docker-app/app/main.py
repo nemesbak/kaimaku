@@ -309,9 +309,14 @@ def is_anime_library(library_name: str | None) -> bool:
     return any(hint in name for hint in ANIME_LIBRARY_HINTS)
 
 
-def build_auto_queries(name: str, anime: bool = True) -> list[str]:
+def build_auto_queries(name: str, anime: bool = True, year: int | None = None) -> list[str]:
     templates = ANIME_QUERY_TEMPLATES if anime else GENERIC_QUERY_TEMPLATES
-    return [t.format(title=name) for t in templates]
+    queries = [t.format(title=name) for t in templates]
+    if year and not anime:
+        # Con el año YouTube distingue remakes/adaptaciones del mismo nombre
+        # (2026-10-24: Lupin 2021 de Netflix recibió el opening del anime Lupin III).
+        queries[:2] = [f"{name} {year} intro serie", f"{name} {year} opening credits"]
+    return queries
 
 
 # Terminos ya normalizados (sin tildes, minusculas). Se comparan por palabra
@@ -333,6 +338,8 @@ JUNK_TERMS = (
     "spot", "tv spot", "anuncio", "avance", "promo", "featurette", "videoclip", "making of", "como se hizo", "behind the scenes",
     "style", "homage", "reimagined", "fan edit",
 )
+# Fuera de anime, un vídeo de dibujos es casi siempre otra obra con el mismo nombre (Lupin III vs Lupin 2021).
+ANIMATION_TERMS = ("anime", "dibujos", "dibujos animados", "animada", "animado", "animation", "animated", "cartoon", "caricatura", "manga")
 SEASON_RE = re.compile(r"\b(?:season|temporada|s)\s?0*([2-9]|\d{2})\b")
 YEAR_RE = re.compile(r"\b(19\d{2}|20\d{2})\b")
 
@@ -379,12 +386,17 @@ def score_auto_candidate(name: str, year: int | None, video: dict[str, Any], ani
     if SEASON_RE.search(title):
         score -= 0.05  # a igualdad, mejor el opening original que el de una temporada posterior
     duration = video.get("duration") or 0
-    if duration and duration <= 360:
+    if duration and duration < 8:
+        score -= 0.20  # rótulo/title card de pocos segundos: no sirve como tema musical
+    elif duration and duration <= 360:
         score += 0.10
     if duration and duration > 360:
         score -= 0.25
-    if has_term(title, JUNK_TERMS) or (not anime and has_term(title, ("anime",))):
+    if has_term(title, JUNK_TERMS) or (not anime and has_term(title, ANIMATION_TERMS)):
         score -= 0.30  # "anime opening" fuera de una biblioteca de anime = fan-made ("Cars 3 Anime Opening")
+    elif (not anime and year and year >= 2000 and not has_term(item_name, ("iii", "3"))
+          and has_term(title, ("iii", "the third", "the 3rd", "tercero", "part 6", "parte 6"))):
+        score -= 0.40  # Lupin III, etc.: la versión animada clásica, no la serie de imagen real
     return max(0.0, min(1.0, score))
 
 
@@ -542,7 +554,7 @@ def auto_search_candidates(destination: Path, limit: int = 8) -> tuple[str, int 
     root = root_for(destination)
     # La carpeta (anime/) o el nombre de la biblioteca en Jellyfin ("Anime") deciden.
     anime = root is None or is_anime_library(root.name) or is_anime_library(library_ref(root)["label"])
-    queries = build_auto_queries(name, anime)
+    queries = build_auto_queries(name, anime, year)
 
     seen: set[str] = set()
     candidates: list[dict[str, Any]] = []
