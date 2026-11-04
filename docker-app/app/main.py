@@ -991,28 +991,31 @@ def revalidate_installed() -> list[str]:
     removed: list[str] = []
     touched: set[str] = set()
     for item in media_items():
-        src = item.get("audio_source") or item.get("video_source")
-        if not src or src.get("manual"):
-            continue
-        root = root_for(Path(item["path"]))
-        anime = root is None or is_anime_library(root.name) or is_anime_library(library_ref(root)["label"])
-        name, year = parse_folder_name(Path(item["path"]).name)
-        score = score_auto_candidate(name, year, {"title": src.get("title"), "uploader": src.get("uploader")}, anime)
-        if score >= REVALIDATE_MIN_SCORE:
-            continue
         dest = Path(item["path"])
+        root = root_for(dest)
+        anime = root is None or is_anime_library(root.name) or is_anime_library(library_ref(root)["label"])
+        name, year = parse_folder_name(dest.name)
+        # Audio y video pueden venir de videos distintos: cada uno se juzga por su origen.
+        dropped: list[tuple[str, float, str]] = []
         for asset, rel in (("audio", THEME_AUDIO), ("video", THEME_VIDEO)):
-            s = item.get(f"{asset}_source")
-            if not s or s.get("manual") or s.get("id") != src.get("id"):
+            src = item.get(f"{asset}_source")
+            if not src or src.get("manual"):
+                continue
+            score = score_auto_candidate(name, year, {"title": src.get("title"), "uploader": src.get("uploader")}, anime)
+            if score >= REVALIDATE_MIN_SCORE:
                 continue
             target = dest / rel
             if target.exists():
                 backup_existing(target, dest)
                 target.unlink()
-        update_item_state(item["id"], audio_source=None, video_source=None, needs_review=False,
-                          candidates=[], last_scanned=None,
-                          last_error=f"tema retirado por revalidacion ({round(score * 100)}%): {src.get('title')}")
-        removed.append(f"{item['name']} ({round(score * 100)}%)")
+            update_item_state(item["id"], **{f"{asset}_source": None})
+            dropped.append((asset, score, src.get("title") or ""))
+        if not dropped:
+            continue
+        worst = min(dropped, key=lambda d: d[1])
+        update_item_state(item["id"], needs_review=False, candidates=[], last_scanned=None,
+                          last_error=f"tema retirado por revalidacion ({round(worst[1] * 100)}%): {worst[2]}")
+        removed.append(f"{item['name']} ({round(worst[1] * 100)}%)")
         touched.add(item["root"])
     for root in touched:
         refresh_servers(Path(root))
