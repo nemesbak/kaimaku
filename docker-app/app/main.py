@@ -1153,7 +1153,12 @@ def run_auto_scan(trigger: str = "schedule") -> dict[str, Any]:
             # buscarlo cada 12 h eran ~9000 busquedas por pasada (13 h seguidas
             # y 403 de YouTube). Se vuelve a mirar una vez por semana.
             stored = item_state(item["id"])
-            if was_review and _ts(item.get("last_scanned")) > recheck_before:
+            # Un 403 de YouTube es pasajero (rafaga o yt-dlp viejo): se reintenta en el
+            # siguiente escaneo en vez de esperar una semana.
+            blocked = "403" in (stored.get("last_error") or "")
+            if blocked:
+                stored.pop("ai_checked", None)
+            if was_review and not blocked and _ts(item.get("last_scanned")) > recheck_before:
                 # Sin buscar otra vez en YouTube: la IA mira los candidatos ya guardados (una vez).
                 if not sc.setting("ai_url") or stored.get("ai_checked"):
                     continue
