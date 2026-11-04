@@ -1052,6 +1052,78 @@ def revalidate_installed() -> list[str]:
     return removed
 
 
+# ---------------------------------------------------------------------------
+# IA opcional: confirma candidatos dudosos (nota entre AI_MIN_SCORE y min_score)
+# para que nadie tenga que revisar a mano. Solo puede decir "si" a algo que la
+# puntuacion ya considera plausible; nunca rescata un candidato malo.
+# ---------------------------------------------------------------------------
+
+AI_MIN_SCORE = 0.6
+AI_SYSTEM = (
+    "Eres un experto en cine y series. Decides si un video de YouTube es la musica de cabecera, opening o tema principal "
+    "OFICIAL de una obra concreta. Di NO si es: otra obra distinta (aunque comparta palabras del titulo), un remake o "
+    "version de otro año, una serie de dibujos de una pelicula de imagen real (o al reves), un trailer, avance, escena o "
+    "clip, una reaccion, cover o fan-made, o una cancion cualquiera que solo comparte el nombre. "
+    "Primero razona en 15 palabras como maximo, luego decide."
+)
+AI_SCHEMA = {
+    "type": "object",
+    "properties": {"razon": {"type": "string", "maxLength": 200}, "es_el_tema": {"type": "boolean"}},
+    "required": ["razon", "es_el_tema"],
+}
+
+
+def ai_confirms(name: str, year: int | None, kind: str, candidate: dict[str, Any]) -> bool:
+    url = sc.setting("ai_url")
+    if not url:
+        return False
+    if not url.rstrip("/").endswith("/chat/completions"):
+        url = url.rstrip("/") + "/v1/chat/completions"
+    question = (f"Obra: «{name}» ({year or 'año desconocido'}), {kind}.\n"
+                f"Video: «{candidate.get('title')}» — canal: {candidate.get('uploader') or '?'}\n"
+                "¿Es la musica de cabecera/tema oficial de ESTA obra?")
+    body = {
+        "messages": [{"role": "system", "content": AI_SYSTEM}, {"role": "user", "content": question}],
+        "temperature": 0, "max_tokens": 500,
+        "response_format": {"type": "json_schema", "json_schema": {"name": "veredicto", "schema": AI_SCHEMA}},
+    }
+    try:
+        req = request.Request(url, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
+        with request.urlopen(req, timeout=120) as resp:
+            content = json.loads(resp.read())["choices"][0]["message"]["content"]
+        return json.loads(content).get("es_el_tema") is True
+    except Exception:
+        return False  # IA caida o respuesta rara: se queda como estaba (revision), nunca se instala a ciegas
+
+
+def ai_pick(item: dict[str, Any], candidates: list[dict[str, Any]], min_score: float) -> dict[str, Any] | None:
+    if not sc.setting("ai_url"):
+        return None
+    dest = Path(item["path"])
+    name, year = parse_folder_name(dest.name)
+    kind = "serie" if item.get("kind") == "series" else "pelicula"
+    root = root_for(dest)
+    if root is None or is_anime_library(root.name):
+        kind += " (anime/animacion)"
+    nname = normalize(name)
+    generic = len(nname.split()) <= 2 and len(nname) <= 12
+
+    def firm_name(c: dict[str, Any]) -> bool:
+        # "Dmitry Silantyev — Wrath Of The Righteous" no vale para «Wrath»: con nombres
+        # cortos el video tiene que EMPEZAR por el nombre de la obra.
+        title = normalize(c.get("title") or "")
+        if not re.search(r"\b" + re.escape(nname) + r"\b", title):
+            return False
+        return not generic or _starts_as_title(c.get("title") or "", nname)
+
+    junk = ("avance", "aventura", "trailer", "teaser", "clip", "escena", "anime opening", "anime op", "music video", "official music")
+    for cand in [c for c in candidates if AI_MIN_SCORE <= (c.get("score") or 0) < min_score
+                 and firm_name(c) and not has_term(normalize(c.get("title") or ""), junk)][:3]:
+        if ai_confirms(name, year, kind, cand):
+            return cand
+    return None
+
+
 def run_auto_scan(trigger: str = "schedule") -> dict[str, Any]:
     if not scan_lock.acquire(blocking=False):
         return {"skipped": "already running"}
@@ -1077,10 +1149,23 @@ def run_auto_scan(trigger: str = "schedule") -> dict[str, Any]:
             # Lo que ya esta en revision casi nunca cambia de un escaneo a otro:
             # buscarlo cada 12 h eran ~9000 busquedas por pasada (13 h seguidas
             # y 403 de YouTube). Se vuelve a mirar una vez por semana.
+            stored = item_state(item["id"])
             if was_review and _ts(item.get("last_scanned")) > recheck_before:
-                continue
+                # Sin buscar otra vez en YouTube: la IA mira los candidatos ya guardados (una vez).
+                if not sc.setting("ai_url") or stored.get("ai_checked"):
+                    continue
+                # Notas recalculadas con la puntuacion actual (las guardadas pueden ser de una version vieja).
+                sname, syear = parse_folder_name(Path(item["path"]).name)
+                sroot = root_for(Path(item["path"]))
+                sanime = sroot is None or is_anime_library(sroot.name) or is_anime_library(library_ref(sroot)["label"])
+                candidates = sorted(
+                    ({**c, "score": round(score_auto_candidate(sname, syear, c, sanime), 3)} for c in stored.get("candidates") or []),
+                    key=lambda c: c["score"], reverse=True)
+            else:
+                candidates = None
             try:
-                _, _, candidates = auto_search_candidates(Path(item["path"]))
+                if candidates is None:
+                    _, _, candidates = auto_search_candidates(Path(item["path"]))
             except Exception as exc:
                 error_names.append(item["name"])
                 update_item_state(item["id"], last_scanned=now_iso(), last_error=str(exc))
@@ -1095,6 +1180,12 @@ def run_auto_scan(trigger: str = "schedule") -> dict[str, Any]:
             # Tope de 3 intentos por item para que un item con muchos candidatos
             # empatados en el umbral no alargue el escaneo entero si todos fallan.
             qualifying = [c for c in candidates if c["score"] >= min_score][:3]
+            ai_choice = None
+            if not qualifying:
+                ai_choice = ai_pick(item, candidates, min_score)
+                update_item_state(item["id"], ai_checked=True)
+                if ai_choice:
+                    qualifying = [ai_choice]
             # Solo falta el video y se sabe de que video salio el audio: ese va
             # primero, para que audio e intro sean la misma pieza.
             audio_src = item.get("audio_source") or {}
@@ -1112,10 +1203,12 @@ def run_auto_scan(trigger: str = "schedule") -> dict[str, Any]:
                 try:
                     run_install(job, source={
                         "id": candidate["id"], "title": candidate["title"], "uploader": candidate.get("uploader"),
-                        "url": candidate["webpage_url"],
+                        "url": candidate["webpage_url"], "ai": candidate is ai_choice,
                     })
+                    if candidate is ai_choice:
+                        time.sleep(20)  # rafagas de descargas = 403 de YouTube
                     job.status = "done"
-                    installed_names.append(f"{item['name']} ({round(candidate['score'] * 100)}%)")
+                    installed_names.append(f"{item['name']} ({round(candidate['score'] * 100)}%{', IA' if candidate is ai_choice else ''})")
                     touched_libraries.add(item["root"])
                     emit_event({"type": "scan_progress", "item": item["name"], "outcome": "installed"})
                     installed_ok = True

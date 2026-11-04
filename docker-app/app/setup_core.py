@@ -27,7 +27,7 @@ from typing import Any
 from urllib import request
 from urllib.error import HTTPError, URLError
 
-VERSION = "1.7.0"
+VERSION = "1.8.0"
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 CONFIG_FILE = DATA_DIR / "config.json"
@@ -41,6 +41,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "tg_bot_token": "",
     "tg_chat_id": "",
     "tg_topic_id": "",
+    # Opcional: endpoint OpenAI-compatible (llama.cpp, Ollama, LM Studio...) que confirma
+    # los candidatos dudosos. Vacio = sin IA, solo la puntuacion.
+    "ai_url": "",
 }
 # setting -> variable de entorno que, si tiene valor, manda sobre lo guardado en la web
 SETTING_ENV = {
@@ -50,6 +53,7 @@ SETTING_ENV = {
     "tg_bot_token": "TG_BOT_TOKEN",
     "tg_chat_id": "TG_CHAT_ID",
     "tg_topic_id": "TG_TOPIC_ID",
+    "ai_url": "AI_URL",
 }
 
 # Tipos de biblioteca de Jellyfin/Emby donde los temas tienen sentido.
