@@ -158,6 +158,7 @@ Nada de esto hace falta, pero sigue funcionando (y si una variable tiene valor, 
 | `AUTO_MIN_SCORE` | Confianza mínima (0–1) para instalar sin preguntar. Por defecto `0.75`. |
 | `AUTO_ASSETS` | `audio`, `video` o `audio,video`. |
 | `TG_BOT_TOKEN`, `TG_CHAT_ID`, `TG_TOPIC_ID` | Avisos por Telegram. |
+| `AI_URL` | Opcional. Servidor de IA compatible con OpenAI (llama.cpp, Ollama, LM Studio…), p. ej. `http://host.docker.internal:11434`. Confirma los candidatos dudosos (nota 0,6–0,75) para que no haga falta revisarlos a mano. Vacío = sin IA. |
 
 ## Licencia
 

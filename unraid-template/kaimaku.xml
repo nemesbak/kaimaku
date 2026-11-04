@@ -23,4 +23,5 @@
   <Config Name="Datos" Target="/data" Default="/mnt/user/appdata/kaimaku" Mode="rw" Description="Configuración y estado de Kaimaku. No hace falta tocarla." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/kaimaku</Config>
   <Config Name="PUID" Target="PUID" Default="" Mode="" Description="Opcional. Vacío = automático: los archivos que crea Kaimaku quedan con el mismo dueño que la carpeta de cada serie/película." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
   <Config Name="PGID" Target="PGID" Default="" Mode="" Description="Opcional, ver PUID." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="IA (opcional)" Target="AI_URL" Default="" Mode="" Description="Servidor de IA compatible con OpenAI (llama.cpp, Ollama…), p. ej. http://host.docker.internal:11434. Confirma los candidatos dudosos sin revisión manual. Vacío = sin IA." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
 </Container>
