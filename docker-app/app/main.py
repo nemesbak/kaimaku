@@ -357,6 +357,36 @@ def has_term(text: str, terms: tuple[str, ...]) -> bool:
     return any(re.search(r"\b" + re.escape(term) + r"\b", text) for term in terms)
 
 
+# Lo que puede seguir al nombre cuando el video ES de esa obra ("Infinite 2021
+# opening"), frente a otra obra que empieza igual ("Infinite Dendrogram").
+TITLE_FOLLOW_WORDS = {
+    "opening", "op", "intro", "theme", "tema", "main", "title", "titles", "official", "oficial", "serie", "series",
+    "tv", "pelicula", "movie", "film", "castellano", "espanol", "spanish", "latino", "ost", "soundtrack", "banda",
+    "cabecera", "sintonia", "credits", "creditos", "season", "temporada", "netflix", "hbo", "apple", "prime",
+    "disney", "trailer", "song", "cancion", "music", "musica", "end", "ending", "the", "full",
+}
+
+
+def _starts_as_title(raw_title: str, item_name: str) -> bool:
+    """El video empieza por el nombre y despues viene un separador ("Pluribus —",
+    "Moon Knight |", "Mulan:") o una palabra de cabecera ("Ted 2012 opening"),
+    no otra palabra de un titulo distinto ("Infinite Dendrogram", "Queer Eye")."""
+    raw = unicodedata.normalize("NFKD", raw_title).encode("ascii", "ignore").decode("ascii").lower()
+    pattern = r"^\W*" + r"[^a-z0-9]+".join(re.escape(w) for w in item_name.split())
+    m = re.match(pattern, raw)
+    if not m:
+        return False
+    rest = raw[m.end():]
+    if not rest.strip() or not rest[0].isalnum() and not rest.startswith(" "):
+        return True  # "Mulan:", "Ant-Man|"
+    rest = rest.lstrip()
+    if not rest or not rest[0].isalnum():
+        return True  # "Pluribus — ...", "Moon Knight | ..."
+    word = re.match(r"[a-z0-9]+", rest).group(0)
+    return (word in TITLE_FOLLOW_WORDS or word.isdigit() or word in ("i", "4k", "hd", "extended")
+            or bool(re.fullmatch(r"s\d+(e\d+)?", word)))
+
+
 def score_auto_candidate(name: str, year: int | None, video: dict[str, Any], anime: bool = True) -> float:
     title = normalize(video.get("title") or "")
     channel = normalize(video.get("uploader") or video.get("channel") or "")
@@ -366,7 +396,7 @@ def score_auto_candidate(name: str, year: int | None, video: dict[str, Any], ani
     # Nombres cortos/genericos ("Industry", "Ted 2") aparecen dentro de titulos
     # de cualquier cosa: solo puntuan del todo si el video EMPIEZA por el nombre
     # ("Flow" -> "Naruto Opening 6 | Sign by FLOW", "Stick" -> Hey Duggee).
-    weak_name = len(item_name.split()) <= 2 and len(item_name) <= 12 and not title.startswith(item_name)
+    weak_name = len(item_name.split()) <= 2 and len(item_name) <= 12 and not _starts_as_title(video.get("title") or "", item_name)
     if name_match:
         score += 0.15 if weak_name else 0.35
     if has_term(title, THEME_TERMS):
