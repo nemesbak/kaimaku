@@ -337,7 +337,16 @@ JUNK_TERMS = (
     "completa", "full movie", "pelicula completa", "fandub", "shorts", "parody", "parodia", "fanmade", "fan made",
     "spot", "tv spot", "anuncio", "avance", "promo", "featurette", "videoclip", "making of", "como se hizo", "behind the scenes",
     "style", "homage", "reimagined", "fan edit",
+    "unofficial", "no oficial", "karaoke", "gameplay", "walkthrough",
+    # "Opening to X 2023 Blu-ray" = los anuncios del principio del disco; "logos" = logos de estudio.
+    "opening to", "logos", "blu ray", "dvd", "vhs",
 )
+# Fuera de anime un videoclip/letra es casi siempre otra cancion con el mismo
+# nombre (2026-11-04: Gold -> "GOLDEN" de KPop Demon Hunters, The Killer ->
+# Mr. Brightside). En anime "OP sub espanol + lyrics" si suele ser el bueno.
+MUSIC_VIDEO_TERMS = ("music video", "video oficial", "official video", "lyric video", "visualizer", "lyrics", "letra", "official audio")
+# Canales que suben "bandas sonoras" inventadas con el nombre de cada estreno.
+JUNK_CHANNELS = ("popcorn tracks", "ost obsession")
 # Fuera de anime, un vídeo de dibujos es casi siempre otra obra con el mismo nombre (Lupin III vs Lupin 2021).
 ANIMATION_TERMS = ("anime", "dibujos", "dibujos animados", "animada", "animado", "animation", "animated", "cartoon", "caricatura", "manga")
 SEASON_RE = re.compile(r"\b(?:season|temporada|s)\s?0*([2-9]|\d{2})\b")
@@ -353,12 +362,13 @@ def score_auto_candidate(name: str, year: int | None, video: dict[str, Any], ani
     channel = normalize(video.get("uploader") or video.get("channel") or "")
     item_name = normalize(name)
     score = 0.0
-    if item_name and re.search(r"\b" + re.escape(item_name) + r"\b", title):
-        # Nombres cortos/genericos ("Industry", "Ted 2") aparecen dentro de
-        # titulos de cualquier cosa: solo puntuan del todo si el video EMPIEZA
-        # por el nombre; si no, cuentan poco.
-        generic = len(item_name.split()) <= 2 and len(item_name) <= 12
-        score += 0.35 if (not generic or title.startswith(item_name)) else 0.15
+    name_match = bool(item_name and re.search(r"\b" + re.escape(item_name) + r"\b", title))
+    # Nombres cortos/genericos ("Industry", "Ted 2") aparecen dentro de titulos
+    # de cualquier cosa: solo puntuan del todo si el video EMPIEZA por el nombre
+    # ("Flow" -> "Naruto Opening 6 | Sign by FLOW", "Stick" -> Hey Duggee).
+    weak_name = len(item_name.split()) <= 2 and len(item_name) <= 12 and not title.startswith(item_name)
+    if name_match:
+        score += 0.15 if weak_name else 0.35
     if has_term(title, THEME_TERMS):
         score += 0.25
     if has_term(title, TITLE_SEQUENCE_TERMS):
@@ -376,8 +386,8 @@ def score_auto_candidate(name: str, year: int | None, video: dict[str, Any], ani
         score += 0.15
     # "Netflix"/"Prime" en el TITULO no prueban nada (cualquiera lo escribe);
     # solo cuenta si el canal es el oficial.
-    if any(term in channel for term in OFFICIAL_CHANNEL_TERMS):
-        score += 0.20
+    if any(term in channel for term in OFFICIAL_CHANNEL_TERMS) and name_match and not weak_name:
+        score += 0.20  # el canal oficial avala SU obra, no cualquier opening con esa palabra
     title_years = {int(y) for y in YEAR_RE.findall(title)}
     if year and year in title_years:
         score += 0.05
@@ -392,11 +402,16 @@ def score_auto_candidate(name: str, year: int | None, video: dict[str, Any], ani
         score += 0.10
     if duration and duration > 360:
         score -= 0.25
-    if has_term(title, JUNK_TERMS) or (not anime and has_term(title, ANIMATION_TERMS)):
+    if (has_term(title, JUNK_TERMS) or has_term(channel, JUNK_CHANNELS) or (not anime and has_term(title, ANIMATION_TERMS))
+            or (not anime and has_term(title, MUSIC_VIDEO_TERMS))):
         score -= 0.30  # "anime opening" fuera de una biblioteca de anime = fan-made ("Cars 3 Anime Opening")
     elif (not anime and year and year >= 2000 and not has_term(item_name, ("iii", "3"))
           and has_term(title, ("iii", "the third", "the 3rd", "tercero", "part 6", "parte 6"))):
         score -= 0.40  # Lupin III, etc.: la versión animada clásica, no la serie de imagen real
+    if not name_match:
+        # Sin el nombre en el titulo nada prueba que sea de esta obra
+        # (antes podia llegar a 1.0 solo con "opening oficial castellano").
+        score = min(score, 0.45)
     return max(0.0, min(1.0, score))
 
 
@@ -863,7 +878,9 @@ def run_install(job: Job, source: dict[str, Any] | None = None) -> None:
         "url": metadata.get("webpage_url") or job.url,
         "installed_at": now_iso(),
     }
-    src_meta = {**src_meta, "installed_at": now_iso()}
+    # Lo elegido a mano no lo toca la revalidacion del escaneo; lo automatico
+    # guarda su nota para poder recalcularla si cambia la puntuacion.
+    src_meta = {**src_meta, "installed_at": now_iso(), "manual": source is None}
 
     # Primero se descarga TODO a work/ y solo despues se instala: si el video
     # falla tras bajar el audio, no queda un audio instalado a medias que el
@@ -964,6 +981,44 @@ scan_lock = threading.Lock()
 REVIEW_RECHECK_DAYS = 7
 
 
+# Temas instalados solos que, con la puntuacion de hoy, no se instalarian ni
+# de lejos (2026-11-04: ~470 de agosto eran canciones de otra cosa). Se quitan
+# (con copia en backups/) y el item vuelve a buscarse como si nunca lo hubiera tenido.
+REVALIDATE_MIN_SCORE = 0.6
+
+
+def revalidate_installed() -> list[str]:
+    removed: list[str] = []
+    touched: set[str] = set()
+    for item in media_items():
+        src = item.get("audio_source") or item.get("video_source")
+        if not src or src.get("manual"):
+            continue
+        root = root_for(Path(item["path"]))
+        anime = root is None or is_anime_library(root.name) or is_anime_library(library_ref(root)["label"])
+        name, year = parse_folder_name(Path(item["path"]).name)
+        score = score_auto_candidate(name, year, {"title": src.get("title"), "uploader": src.get("uploader")}, anime)
+        if score >= REVALIDATE_MIN_SCORE:
+            continue
+        dest = Path(item["path"])
+        for asset, rel in (("audio", THEME_AUDIO), ("video", THEME_VIDEO)):
+            s = item.get(f"{asset}_source")
+            if not s or s.get("manual") or s.get("id") != src.get("id"):
+                continue
+            target = dest / rel
+            if target.exists():
+                backup_existing(target, dest)
+                target.unlink()
+        update_item_state(item["id"], audio_source=None, video_source=None, needs_review=False,
+                          candidates=[], last_scanned=None,
+                          last_error=f"tema retirado por revalidacion ({round(score * 100)}%): {src.get('title')}")
+        removed.append(f"{item['name']} ({round(score * 100)}%)")
+        touched.add(item["root"])
+    for root in touched:
+        refresh_servers(Path(root))
+    return removed
+
+
 def run_auto_scan(trigger: str = "schedule") -> dict[str, Any]:
     if not scan_lock.acquire(blocking=False):
         return {"skipped": "already running"}
@@ -980,6 +1035,7 @@ def run_auto_scan(trigger: str = "schedule") -> dict[str, Any]:
         min_score = sc.setting("min_score")
 
         recheck_before = time.time() - REVIEW_RECHECK_DAYS * 86400
+        removed_names = revalidate_installed()
         for item in media_items():
             needed = [a for a in auto_assets if not item.get(f"has_{a}")]
             if not needed:
@@ -1079,6 +1135,7 @@ def run_auto_scan(trigger: str = "schedule") -> dict[str, Any]:
             "installed": installed_names,
             "new_review": newly_review_names,
             "errors": error_names,
+            "removed": removed_names,
             "finished_at": now_iso(),
         }
         scan_state.last_finished = now_iso()
@@ -1088,7 +1145,7 @@ def run_auto_scan(trigger: str = "schedule") -> dict[str, Any]:
             save_state()
         emit_event({"type": "scan", "scan": asdict(scan_state)})
 
-        if installed_names or newly_review_names or error_names:
+        if installed_names or newly_review_names or error_names or removed_names:
             lines = [f"🎬 <b>Kaimaku — escaneo automático</b>", ""]
             if installed_names:
                 lines.append(f"✅ Instalados ({len(installed_names)}):")
@@ -1101,6 +1158,12 @@ def run_auto_scan(trigger: str = "schedule") -> dict[str, Any]:
                 lines += [f"• {tg_escape(n)}" for n in newly_review_names[:15]]
                 if len(newly_review_names) > 15:
                     lines.append(f"…y {len(newly_review_names) - 15} más")
+                lines.append("")
+            if removed_names:
+                lines.append(f"🗑 Retirados por no corresponder ({len(removed_names)}):")
+                lines += [f"• {tg_escape(n)}" for n in removed_names[:15]]
+                if len(removed_names) > 15:
+                    lines.append(f"…y {len(removed_names) - 15} más")
                 lines.append("")
             if error_names:
                 lines.append(f"⚠️ Errores ({len(error_names)}):")
