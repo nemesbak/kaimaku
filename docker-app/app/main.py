@@ -1031,7 +1031,10 @@ def revalidate_installed() -> list[str]:
             src = item.get(f"{asset}_source")
             if not src or src.get("manual"):
                 continue
-            score = score_auto_candidate(name, year, {"title": src.get("title"), "uploader": src.get("uploader")}, anime)
+            # Misma nota que al instalar: la duracion tambien cuenta (sin ella, lo recien
+            # instalado quedaba ~0,1 por debajo y la revalidacion lo borraba).
+            score = score_auto_candidate(name, year, {"title": src.get("title"), "uploader": src.get("uploader"),
+                                                      "duration": src.get("duration") or 120}, anime)
             if score >= REVALIDATE_MIN_SCORE:
                 continue
             target = dest / rel
@@ -1204,6 +1207,7 @@ def run_auto_scan(trigger: str = "schedule") -> dict[str, Any]:
                     run_install(job, source={
                         "id": candidate["id"], "title": candidate["title"], "uploader": candidate.get("uploader"),
                         "url": candidate["webpage_url"], "ai": candidate is ai_choice,
+                        "duration": candidate.get("duration"),
                     })
                     if candidate is ai_choice:
                         time.sleep(20)  # rafagas de descargas = 403 de YouTube

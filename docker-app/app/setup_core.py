@@ -27,7 +27,7 @@ from typing import Any
 from urllib import request
 from urllib.error import HTTPError, URLError
 
-VERSION = "1.8.0"
+VERSION = "1.8.1"
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 CONFIG_FILE = DATA_DIR / "config.json"
